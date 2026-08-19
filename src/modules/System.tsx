@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ROLE_AR, useStore } from "../lib/store";
 import { Badge, Btn, Icon, SectionHead, inputCls, type BadgeTone } from "../components/ui";
+import GithubExport from "./GithubExport";
 
 const FOLDERS = `ovenwright/
 ├─ web/                        # Next.js (RTL-first) — المتجر + بوابة المصنع
@@ -298,7 +299,7 @@ images: { formats: ["image/avif","image/webp"] }  // صور المنتجات`;
 
 export default function System() {
   const { audit } = useStore();
-  const [tab, setTab] = useState<"audit" | "blueprint">("audit");
+  const [tab, setTab] = useState<"github" | "audit" | "blueprint">("github");
   const [q, setQ] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -323,17 +324,20 @@ export default function System() {
   return (
     <div>
       <SectionHead
-        title="النظام والتدقيق"
-        desc="سجل الإجراءات الحساسة (IP + جهاز) + المخطط المعماري الإنتاجي: Next.js + Express + MongoDB + Redis"
+        title="النظام والتصدير"
+        desc="تصدير المشروع إلى GitHub · سجل الإجراءات الحساسة (IP + جهاز) · المخطط المعماري الإنتاجي"
         actions={
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => setTab("github")} className={`btn-press rounded-full border px-4 py-1.5 text-[12.5px] font-bold ${tab === "github" ? "border-brand bg-brand text-cream" : "border-line bg-surface text-mute"}`}><Icon name="download" size={13} className="me-1 inline" />تصدير GitHub</button>
             <button onClick={() => setTab("audit")} className={`btn-press rounded-full border px-4 py-1.5 text-[12.5px] font-bold ${tab === "audit" ? "border-brand bg-brand text-cream" : "border-line bg-surface text-mute"}`}>سجل التدقيق</button>
             <button onClick={() => setTab("blueprint")} className={`btn-press rounded-full border px-4 py-1.5 text-[12.5px] font-bold ${tab === "blueprint" ? "border-brand bg-brand text-cream" : "border-line bg-surface text-mute"}`}>المخطط المعماري</button>
           </div>
         }
       />
 
-      {tab === "audit" ? (
+      {tab === "github" && <GithubExport />}
+
+      {tab === "audit" && (
         <div className="card overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
             <p className="flex items-center gap-2 text-[13px] font-bold">
@@ -360,7 +364,9 @@ export default function System() {
             {list.length === 0 && <p className="p-8 text-center text-[13px] font-semibold text-mute">لا نتائج لـ «{q}»</p>}
           </div>
         </div>
-      ) : (
+      )}
+
+      {tab === "blueprint" && (
         <div className="grid gap-4 lg:grid-cols-2">
           {[
             { key: "folders", title: "هيكل المشروع (Next.js + Express + Mongo)", desc: "بوابة المصنع · المتجر · خادم API · Redis", code: FOLDERS },

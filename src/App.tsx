@@ -12,6 +12,7 @@ import Checkout from "./modules/Checkout";
 import Orders from "./modules/Orders";
 import Inventory from "./modules/Inventory";
 import Security from "./modules/Security";
+import Workers from "./modules/Workers";
 import System from "./modules/System";
 
 export default function App() {
@@ -46,6 +47,7 @@ export default function App() {
     orders: <Orders />,
     inventory: <Inventory />,
     security: <Security />,
+    workers: <Workers />,
     system: <System />,
   };
 

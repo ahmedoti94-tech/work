@@ -1,32 +1,70 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { fmtDateShort, fmtMoney, waLink } from "../lib/payroll";
-import { PAY_AR, STATUS_AR, cartSummary, deliveryMinDate, useStore } from "../lib/store";
+import { COMPANY, GOVERNORATES } from "../lib/data";
+import { FREE_DELIVERY_MIN, fmtDateShort, fmtMoney, isValidEgyptianPhone, waLink } from "../lib/payroll";
+import { PAY_AR, cartSummary, deliveryMinDate, useStore } from "../lib/store";
 import type { PaymentMethod } from "../lib/types";
 import { Badge, Btn, Field, Icon, Modal, inputCls } from "../components/ui";
 
-const STEPS = ["مراجعة السلة", "التوصيل", "الدفع والتأكيد"];
+const STEPS = ["مراجعة السلة", "التوصيل", "الدفع والحساب"];
 
 export default function Checkout() {
   const {
     cart, cartOpen, setCartOpen, checkoutOpen, setCheckoutOpen, products,
     setLineQty, removeLine, placeOrder, user, toast, setView,
+    requestOtp, verifyOtp, registerCustomer,
   } = useStore();
+
   const [step, setStep] = useState(0);
   const [customer, setCustomer] = useState(user.role === "customer" ? user.name : "");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(user.role === "customer" ? (user.phone ?? "") : "");
+  const [govId, setGovId] = useState("g1");
+  const [city, setCity] = useState("");
+  const [street, setStreet] = useState("");
   const [date, setDate] = useState(deliveryMinDate());
   const [window_, setWindow_] = useState("08:00 – 12:00");
   const [payment, setPayment] = useState<PaymentMethod>("cod");
   const [placedId, setPlacedId] = useState<string | null>(null);
+  // OTP — إنشاء حساب بنقرة أثناء الطلب
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpInput, setOtpInput] = useState("");
+  const [demoCode, setDemoCode] = useState<string | null>(null);
+  const [otpOk, setOtpOk] = useState(false);
+  const [otpError, setOtpError] = useState(false);
 
-  const sum = useMemo(() => cartSummary(cart, products), [cart, products]);
+  const sum = useMemo(() => cartSummary(cart, products, govId), [cart, products, govId]);
+  const gov = GOVERNORATES.find((g) => g.id === govId)!;
+  const phoneOk = isValidEgyptianPhone(phone);
+  const verifiedAccount = user.role === "customer" && !!user.phone && phone === user.phone;
 
   const openCheckout = () => { setStep(0); setCheckoutOpen(true); setCartOpen(false); };
-  const reset = () => { setCheckoutOpen(false); setPlacedId(null); setStep(0); };
+  const reset = () => {
+    setCheckoutOpen(false); setPlacedId(null); setStep(0);
+    setOtpSent(false); setOtpOk(false); setOtpInput(""); setDemoCode(null); setOtpError(false);
+  };
+
+  const sendOtp = () => {
+    const code = requestOtp(phone);
+    setDemoCode(code);
+    setOtpSent(true);
+    toast(`أُرسل رمز تحقق إلى ${phone} عبر SMS`, "brand");
+  };
+  const checkOtp = () => {
+    if (verifyOtp(otpInput)) {
+      setOtpOk(true); setOtpError(false);
+      registerCustomer(customer.trim() || user.name, phone, {
+        id: `sa-${Date.now()}`, govId, city: city.trim() || gov.name, street: street.trim() || "—", phone,
+      });
+    } else {
+      setOtpError(true);
+      toast("رمز التحقق غير صحيح — حاول مجددًا", "berry");
+    }
+  };
+
+  const canConfirm = customer.trim().length >= 3 && phoneOk && (verifiedAccount || otpOk);
 
   const confirm = () => {
-    const order = placeOrder(customer.trim() || user.name, phone || "966500000000", date, window_, payment);
+    const order = placeOrder(customer.trim() || user.name, phone, date, window_, payment, govId, city.trim() || gov.name);
     setPlacedId(order.id);
     setStep(3);
   };
@@ -36,14 +74,14 @@ export default function Checkout() {
     const order = useStore.getState().orders.find((o) => o.id === placedId);
     if (!order) return;
     const text =
-      `فاتورة طلب ${order.id} — مصنع أوفنرايت\n\nالعميل: ${order.customer}\n` +
+      `فاتورة طلب ${order.id} — ${COMPANY.name}\n\nالعميل: ${order.customer}\n` +
       order.lines.map((l) => {
         const p = products.find((x) => x.id === l.productId)!;
         return `• ${p.name} × ${l.qty} (${l.tier === "box" ? "علب" : l.tier === "carton" ? "كراتين" : "طبالي"})`;
       }).join("\n") +
-      `\n\nالإجمالي: ${fmtMoney(order.subtotal, 0)}\nخصم الكميات: −${fmtMoney(order.discount, 0)}\nالتوصيل: ${order.deliveryFee === 0 ? "مجاني" : fmtMoney(order.deliveryFee, 0)}\nالصافي: ${fmtMoney(order.total, 0)}\nالدفع: ${PAY_AR[order.payment]}\nالتوصيل: ${fmtDateShort(order.deliverOn)} (${order.window})\n\nشكرًا لثقتكم`;
+      `\n\nالإجمالي: ${fmtMoney(order.subtotal, 0)}\nخصم الكميات: −${fmtMoney(order.discount, 0)}\nالتوصيل (${order.governorate ?? ""}): ${order.deliveryFee === 0 ? "مجاني" : fmtMoney(order.deliveryFee, 0)}\nالصافي: ${fmtMoney(order.total, 0)}\nالدفع: ${PAY_AR[order.payment]}\nالتوصيل: ${fmtDateShort(order.deliverOn)} (${order.window})\nبطاقة ضريبية: ${COMPANY.taxId}\n\nشكرًا لثقتكم`;
     window.open(waLink(order.customerPhone, text), "_blank");
-    toast("جارٍ فتح واتساب لإرسال الفاتورة وتحديث الحالة للعميل", "sage");
+    toast("جارٍ فتح واتساب لإرسال الفاتورة الضريبية للعميل", "sage");
   };
 
   return (
@@ -116,7 +154,7 @@ export default function Checkout() {
                   <div className="space-y-1 text-[12.5px] font-semibold">
                     <p className="flex justify-between text-mute"><span>المجموع</span><span className="num">{fmtMoney(sum.subtotal, 0)}</span></p>
                     <p className="flex justify-between text-sage"><span>خصم الكميات</span><span className="num">−{fmtMoney(sum.discount, 0)}</span></p>
-                    <p className="flex justify-between text-mute"><span>التوصيل</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></p>
+                    <p className="flex justify-between text-mute"><span>التوصيل ({gov.name})</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></p>
                     <p className="flex justify-between border-t border-line pt-2 text-[15px] font-extrabold"><span>الإجمالي</span><span className="num text-brand">{fmtMoney(sum.total, 0)}</span></p>
                   </div>
                   <Btn size="lg" className="mt-3 w-full py-3" disabled={sum.issues.length > 0} onClick={openCheckout}>
@@ -138,8 +176,9 @@ export default function Checkout() {
             </span>
             <h3 className="mt-4 font-display text-2xl font-bold">شكرًا لك! طلبك <span className="num text-brand">{placedId}</span> قيد المراجعة</h3>
             <p className="mt-2 text-[13px] leading-relaxed text-mute">
-              سيتواصل معك فريق المبيعات للتأكيد، ويمكنك متابعة الحالة لحظة بلحظة من صفحة «تتبع الطلبات».
-              التوصيل المجدول: <b className="text-ink">{fmtDateShort(date)} ({window_})</b>
+              سيتواصل معك فريق المبيعات للتأكيد على واتساب، ويمكنك متابعة الحالة لحظة بلحظة من «تتبع الطلبات».
+              التوصيل إلى <b className="text-ink">{gov.name}</b>: <b className="text-ink">{fmtDateShort(date)} ({window_})</b>
+              {otpOk && <> · <b className="text-sage">أُنشئ حسابك وحُفظ العنوان والفاتورة فيه</b></>}
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <Btn variant="whatsapp" onClick={sendOrderWhatsApp}><Icon name="whatsapp" size={16} /> استلام الفاتورة واتساب</Btn>
@@ -163,7 +202,7 @@ export default function Checkout() {
 
             {step === 0 && (
               <div className="space-y-3">
-                {sum.lines.map(({ line, product, cartons, rate, net }) => (
+                {sum.lines.map(({ line, product, rate, net }) => (
                   <div key={`${line.productId}-${line.tier}`} className="flex items-center justify-between rounded-lg border border-line bg-raise px-3.5 py-2.5">
                     <span className="text-[13px] font-bold">{product.name} <span className="text-mute">× {line.qty} ({line.tier === "box" ? "علب" : line.tier === "carton" ? "كراتين" : "طبالي"})</span></span>
                     <span className="flex items-center gap-2">
@@ -173,7 +212,7 @@ export default function Checkout() {
                   </div>
                 ))}
                 <p className="text-[12px] font-semibold text-mute">
-                  إجمالي الكمية: <b className="num">{Math.round(sum.cartons)}</b> كرتونة · الإجمالي بعد الخصم: <b className="num text-brand">{fmtMoney(sum.total, 0)}</b>
+                  إجمالي الكمية: <b className="num">{Math.round(sum.cartons)}</b> كرتونة · بعد الخصم: <b className="num text-brand">{fmtMoney(sum.total, 0)}</b>
                 </p>
                 <Btn className="w-full" onClick={() => setStep(1)}>متابعة إلى بيانات التوصيل <Icon name="chevron" size={15} className="rotate-180" /></Btn>
               </div>
@@ -181,14 +220,36 @@ export default function Checkout() {
 
             {step === 1 && (
               <div className="space-y-3.5">
+                {/* العناوين المحفوظة */}
+                {user.savedAddresses && user.savedAddresses.length > 0 && (
+                  <div>
+                    <p className="label-xs mb-1.5">عناوينك المحفوظة</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {user.savedAddresses.map((a) => {
+                        const g = GOVERNORATES.find((x) => x.id === a.govId);
+                        return (
+                          <button key={a.id} onClick={() => { setGovId(a.govId); setCity(a.city); setStreet(a.street); }}
+                            className={`btn-press rounded-full border px-3 py-1.5 text-[11.5px] font-bold ${govId === a.govId && city === a.city ? "border-brand bg-brand/10 text-brand" : "border-line bg-surface text-mute hover:text-ink"}`}>
+                            <Icon name="pin" size={12} className="me-1 inline" /> {g?.name} — {a.city}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div className="grid gap-3.5 sm:grid-cols-2">
-                  <Field label="اسم العميل / المنشأة">
-                    <input className={inputCls} value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="مثال: أسواق النخيل" />
+                  <Field label="المحافظة" hint={`رسوم التوصيل ${fmtMoney(gov.fee, 0)} · مدة ${gov.days} — مجاني للطلبات فوق ${fmtMoney(FREE_DELIVERY_MIN, 0)}`}>
+                    <select className={inputCls} value={govId} onChange={(e) => setGovId(e.target.value)}>
+                      {GOVERNORATES.map((g) => <option key={g.id} value={g.id}>{g.name} — {fmtMoney(g.fee, 0)}</option>)}
+                    </select>
                   </Field>
-                  <Field label="رقم الجوال (واتساب)">
-                    <input className={`${inputCls} num`} dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9665xxxxxxxx" />
+                  <Field label="المدينة / المنطقة">
+                    <input className={inputCls} value={city} onChange={(e) => setCity(e.target.value)} placeholder="مثال: مدينة نصر" />
                   </Field>
-                  <Field label="تاريخ التوصيل" hint="التوصيل متاح من بعد يومين — لا توصيل يوم الجمعة">
+                  <Field label="العنوان التفصيلي">
+                    <input className={inputCls} value={street} onChange={(e) => setStreet(e.target.value)} placeholder="الشارع، رقم العقار، علامة مميزة" />
+                  </Field>
+                  <Field label="تاريخ التوصيل" hint="لا توصيل يوم الجمعة — أقرب موعد بعد يومين">
                     <input type="date" min={deliveryMinDate()} className={`${inputCls} num`} value={date} onChange={(e) => setDate(e.target.value)} />
                   </Field>
                   <Field label="الفترة الزمنية">
@@ -196,10 +257,16 @@ export default function Checkout() {
                       {["08:00 – 12:00", "12:00 – 16:00", "16:00 – 20:00"].map((w) => <option key={w} value={w}>{w}</option>)}
                     </select>
                   </Field>
+                  <div className="flex items-end">
+                    <div className="w-full rounded-xl border border-dashed border-line bg-raise/70 px-3.5 py-2.5 text-[11.5px] font-bold text-mute">
+                      <Icon name="truck" size={14} className="me-1 inline text-brand" />
+                      التوصيل إلى {gov.name}: {sum.deliveryFee === 0 ? "مجاني (طلب كبير)" : fmtMoney(sum.deliveryFee, 0)} · خلال {gov.days}
+                    </div>
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <Btn variant="outline" onClick={() => setStep(0)}><Icon name="chevron" size={15} /> رجوع</Btn>
-                  <Btn className="flex-1" onClick={() => setStep(2)}>متابعة إلى الدفع <Icon name="chevron" size={15} className="rotate-180" /></Btn>
+                  <Btn className="flex-1" onClick={() => setStep(2)}>متابعة إلى الدفع والحساب <Icon name="chevron" size={15} className="rotate-180" /></Btn>
                 </div>
               </div>
             )}
@@ -215,7 +282,7 @@ export default function Checkout() {
                       <span>
                         <span className="block text-[13.5px] font-bold">{PAY_AR[m]}</span>
                         <span className="block text-[11px] text-mute">
-                          {m === "cod" ? "ادفع نقدًا أو بالشبكة عند الاستلام" : m === "transfer" ? "نرسل فاتورة بالآيبان — التحويل خلال ٤٨ ساعة" : "مدى / فيزا / ماستركارد عبر بوابة آمنة"}
+                          {m === "cod" ? "نقدًا أو بشبكة الدفع عند الاستلام" : m === "transfer" ? "فاتورة برقم الحساب البنكي — التحويل خلال ٤٨ ساعة" : "ميزة / فيزا / ماستركارد عبر بوابة آمنة"}
                         </span>
                       </span>
                     </span>
@@ -224,18 +291,77 @@ export default function Checkout() {
                     </span>
                   </button>
                 ))}
+
+                {/* الحساب: OTP بنقرة */}
+                <div className="rounded-xl border border-line bg-raise/70 p-4">
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <p className="font-display text-[14px] font-bold">بيانات العميل وحسابك</p>
+                    {verifiedAccount ? (
+                      <Badge tone="sage"><Icon name="check" size={11} /> حساب موثّق</Badge>
+                    ) : otpOk ? (
+                      <Badge tone="sage"><Icon name="check" size={11} /> تم التحقق وإنشاء الحساب</Badge>
+                    ) : (
+                      <Badge tone="butter">تفعيل بالـOTP</Badge>
+                    )}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="اسم العميل / المنشأة">
+                      <input className={inputCls} value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="مثال: أسواق النخيل" disabled={verifiedAccount} />
+                    </Field>
+                    <Field label="رقم الموبايل المصري (واتساب)">
+                      <input dir="ltr" className={`${inputCls} num text-start ${phone && !phoneOk ? "border-berry" : phoneOk ? "border-sage" : ""}`}
+                        value={phone} onChange={(e) => { setPhone(e.target.value); setOtpSent(false); setOtpOk(false); }} placeholder="2010XXXXXXXX" disabled={verifiedAccount} />
+                      <p className={`mt-1 text-[10.5px] font-bold ${phoneOk ? "text-sage" : "text-mute"}`}>
+                        {phoneOk ? "✓ رقم مصري صحيح — ستصلك تحديثات الطلب واتساب" : "الصيغة: 2010 / 2011 / 2012 / 2015 + ٨ أرقام"}
+                      </p>
+                    </Field>
+                  </div>
+
+                  {!verifiedAccount && phoneOk && !otpOk && (
+                    <div className="mt-3 rounded-lg border border-butter/40 bg-butter/8 p-3">
+                      {!otpSent ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[12px] font-bold leading-relaxed">
+                            <Icon name="user" size={14} className="me-1 inline text-brand" />
+                            أنشئ حسابك بنقرة — يُحفظ عنوانك وسجل فواتيرك، وتتبع طلباتك يصبح فوريًا.
+                          </p>
+                          <Btn variant="butter" size="sm" onClick={sendOtp}><Icon name="phone" size={14} /> إرسال رمز التحقق SMS</Btn>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-[12px] font-bold">أدخل الرمز المكوّن من ٤ أرقام المرسل إلى <span className="num" dir="ltr">+{phone}</span></p>
+                          {demoCode && (
+                            <p className="num mt-1.5 inline-block rounded-md border border-dashed border-brand/50 bg-surface px-2.5 py-1 text-[11px] font-bold text-brand" dir="ltr">
+                              تجريبي (بلا بوابة SMS): {demoCode}
+                            </p>
+                          )}
+                          <div className="mt-2 flex gap-2">
+                            <input dir="ltr" maxLength={4} value={otpInput}
+                              onChange={(e) => { setOtpInput(e.target.value.replace(/\D/g, "")); setOtpError(false); }}
+                              className={`${inputCls} num w-28 text-center text-[18px] font-bold tracking-[0.4em] ${otpError ? "shake border-berry" : ""}`} placeholder="0000" />
+                            <Btn size="sm" onClick={checkOtp} disabled={otpInput.length !== 4}><Icon name="check" size={14} /> تحقق وفعّل</Btn>
+                          </div>
+                          {otpError && <p className="mt-1.5 text-[11px] font-bold text-berry">الرمز غير صحيح — أعد المحاولة</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="rounded-xl border border-line bg-raise p-3.5 text-[12.5px] font-semibold">
                   <div className="flex justify-between"><span className="text-mute">الإجمالي بعد الخصم</span><span className="num">{fmtMoney(sum.subtotal - sum.discount, 0)}</span></div>
-                  <div className="flex justify-between"><span className="text-mute">التوصيل</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-mute">التوصيل — {gov.name}</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></div>
                   <div className="mt-1.5 flex justify-between border-t border-line pt-2 text-[15px] font-extrabold"><span>المستحق</span><span className="num text-brand">{fmtMoney(sum.total, 0)}</span></div>
                 </div>
                 <div className="flex gap-2">
                   <Btn variant="outline" onClick={() => setStep(1)}><Icon name="chevron" size={15} /> رجوع</Btn>
-                  <Btn variant="sage" size="lg" className="flex-1 py-3" onClick={confirm} disabled={!customer.trim()}>
+                  <Btn variant="sage" size="lg" className="flex-1 py-3" onClick={confirm} disabled={!canConfirm}>
                     <Icon name="stamp" size={17} /> تأكيد الطلب — {fmtMoney(sum.total, 0)}
                   </Btn>
                 </div>
-                <p className="text-center text-[11px] text-mute">بالتأكيد توافق على شروط البيع بالجملة · {STATUS_AR.pending} ← الخبز والتعبئة ← الشحن ← التسليم</p>
+                <p className="text-center text-[11px] text-mute">
+                  {canConfirm ? "جاهز للتأكيد — بياناتك صحيحة" : "أكمل الاسم ورقم الموبايل وتحقق بالـOTP للتأكيد"} · فاتورة ببطاقة ضريبية {COMPANY.taxId}
+                </p>
               </div>
             )}
           </>
