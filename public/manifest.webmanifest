@@ -1,0 +1,26 @@
+{
+  "name": "الشركة المصرية للصناعات الغذائية — ERP ومتجر الجملة",
+  "short_name": "المصرية الغذائية",
+  "description": "بوابة عمال، حضور وانصراف، مسير رواتب بالجنيه، كتالوج جملة وإدارة مخزون — يعمل دون اتصال",
+  "dir": "rtl",
+  "lang": "ar",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4ecdd",
+  "theme_color": "#c0761f",
+  "icons": [
+    {
+      "src": "https://image.qwenlm.ai/generated-images/2bd999f5-8ee3-4e38-8a28-f98f355cb372/_result.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://image.qwenlm.ai/generated-images/2bd999f5-8ee3-4e38-8a28-f98f355cb372/_result.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
