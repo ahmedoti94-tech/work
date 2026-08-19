@@ -90,10 +90,25 @@ export const fmtDateShort = (key: string) => {
 };
 export const fmtDateNum = (key: string) => key; // YYYY-MM-DD
 
+/** الجنيه المصري — EGP / ج.م في كل التسعير والرواتب والفواتير */
 export const fmtMoney = (n: number, decimals = 2) =>
-  `${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} ر.س`;
+  `${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })} ج.م`;
 export const fmtMoney0 = (n: number) => fmtMoney(n, 0);
 export const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// ─── التحقق من الأرقام المصرية (+20 1X XXXX XXXX) ────────────────────────────
+export const normalizeEgyptianPhone = (p: string) => p.replace(/[\s\-()]/g, "");
+export const isValidEgyptianPhone = (p: string) =>
+  /^(\+?2)?0?1[0125]\d{8}$/.test(normalizeEgyptianPhone(p));
+export const toWaPhone = (p: string) => {
+  const n = normalizeEgyptianPhone(p).replace(/^\+/, "");
+  if (n.startsWith("20")) return n;
+  if (n.startsWith("0")) return "2" + n;
+  return "20" + n;
+};
+
+// ─── سياسة التوصيل: مجاني فوق هذا الحد، وإلا رسوم المحافظة ────────────────────
+export const FREE_DELIVERY_MIN = 1200;
 
 // ─── تحليل اليوم الواحد ─────────────────────────────────────────────────────
 export interface DayStats {
@@ -131,7 +146,9 @@ export function computePayroll(
 ): PayrollResult {
   const [y, m] = month.split("-").map(Number);
   const workDays = workdaysInMonth(month);
-  const perDay = emp.baseSalary / workDays;
+  // الصيغة المصرية: شهري = الأساسي ÷ أيام العمل الرسمية · يومي = الأجر اليومي × الحضور
+  const isDaily = emp.wageType === "daily";
+  const perDay = isDaily ? (emp.dailyRate ?? 0) : emp.baseSalary / workDays;
   const hourly = perDay / 8;
 
   let presentDays = 0;
@@ -179,10 +196,12 @@ export function computePayroll(
 
   const rows: PayrollRow[] = [
     {
-      label: "الراتب الأساسي (تناسبي)",
+      label: isDaily ? "الأجر اليومي (يومية)" : "الراتب الأساسي (تناسبي)",
       value: baseEarned,
       kind: "earn",
-      sub: `${presentDays + paidLeaveDays} من ${workDays} يوم عمل × ${fmtMoney(perDay)}/يوم`,
+      sub: isDaily
+        ? `${presentDays + paidLeaveDays} يوم حضور × ${fmtMoney(perDay)}/يوم`
+        : `${presentDays + paidLeaveDays} من ${workDays} يوم عمل × ${fmtMoney(perDay)}/يوم`,
     },
     {
       label: `وقت إضافي × ${OT_RATE}`,

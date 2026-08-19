@@ -5,13 +5,14 @@ import type {
   Product, RawMaterial, Role, User, View,
 } from "./types";
 import {
-  ADVANCES_SEED, ATTENDANCE_SEED, AUDIT_SEED, BATCHES, EMPLOYEES, LEAVES_SEED,
-  ORDERS_SEED, PRODUCTS, RAW_MATERIALS, USERS,
+  ADVANCES_SEED, ATTENDANCE_SEED, AUDIT_SEED, BATCHES, EMPLOYEES, GOVERNORATES,
+  LEAVES_SEED, ORDERS_SEED, PRODUCTS, RAW_MATERIALS, USERS,
 } from "./data";
 import {
   addDays, cartonsOf, computePayroll, dateKey, dayStats, fmtMin, fmtMoney0,
-  monthKeyNow, monthLabel, nowMin, round2, todayKey, volumeRate,
+  FREE_DELIVERY_MIN, monthKeyNow, monthLabel, nowMin, round2, todayKey, volumeRate,
 } from "./payroll";
+import type { SavedAddress, WageType } from "./types";
 import { chainHash } from "./crypto";
 
 export type ToastTone = "sage" | "brand" | "berry" | "butter";
@@ -31,13 +32,14 @@ export const LEAVE_AR: Record<LeaveType, string> = {
   sick: "مرضية", annual: "سنوية", unpaid: "غير مدفوعة", permission: "إذن ساعات",
 };
 export const ROLE_AR: Record<Role, string> = {
-  super: "المدير العام", hr: "موارد بشرية", production: "إنتاج ومخزون", sales: "مبيعات", customer: "موظف",
+  super: "المالك / الإدارة العليا", hr: "إدارة الموقع والمصنع", production: "مشرف الوردية والصالة",
+  sales: "مندوب مبيعات", customer: "عميل / تاجر جملة",
 };
 
 let toastSeq = 1;
 let auditSeq = 100;
 
-export const cartSummary = (cart: CartLine[], products: Product[]) => {
+export const cartSummary = (cart: CartLine[], products: Product[], govId?: string) => {
   let subtotal = 0, discount = 0, cartons = 0;
   const issues: string[] = [];
   const lines = cart.map((l) => {
@@ -53,9 +55,11 @@ export const cartSummary = (cart: CartLine[], products: Product[]) => {
     if (c > p.stock) issues.push(`الكمية المطلوبة من «${p.name}» تتجاوز المتوفر (${p.stock} كرتونة)`);
     return { line: l, product: p, pack, cartons: c, rate, gross, net: gross * (1 - rate) };
   });
-  const deliveryFee = subtotal - discount >= 1500 ? 0 : 45;
+  // رسوم التوصيل حسب المحافظة — مجانية فوق حد الطلب
+  const gov = GOVERNORATES.find((g) => g.id === govId);
+  const deliveryFee = subtotal - discount >= FREE_DELIVERY_MIN ? 0 : (gov?.fee ?? 35);
   const total = round2(subtotal - discount + deliveryFee);
-  return { lines, subtotal: round2(subtotal), discount: round2(discount), cartons, deliveryFee, total, issues };
+  return { lines, subtotal: round2(subtotal), discount: round2(discount), cartons, deliveryFee, total, issues, govDays: gov?.days ?? "" };
 };
 
 interface State {
@@ -73,7 +77,22 @@ interface State {
   attendance: AttendanceRecord[];
   punch: (empId: string, type: "in" | "out") => AttendanceRecord | null;
   manualPunch: (empId: string, date: string, inMin: number, outMin: number | null) => void;
+  batchPunch: (empIds: string[], inMin: number) => number;
   adjustSalary: (empId: string, newBase: number) => void;
+
+  // بوابة إدارة العمال (إضافة/تعديل/أرشفة + توليد QR فوري)
+  addWorker: (w: {
+    name: string; phone: string; title: string; dept: string; shift: Employee["shift"];
+    wageType: WageType; baseSalary: number; dailyRate?: number;
+  }) => Employee;
+  updateWorker: (id: string, patch: Partial<Employee>) => void;
+  archiveWorker: (id: string) => void;
+
+  // إنشاء حساب عميل أثناء الطلب (موبايل + OTP)
+  otp: { code: string; phone: string } | null;
+  requestOtp: (phone: string) => string;
+  verifyOtp: (code: string) => boolean;
+  registerCustomer: (name: string, phone: string, addr: SavedAddress) => User;
 
   online: boolean;
   setOnline: (v: boolean) => void;
@@ -98,7 +117,7 @@ interface State {
   setLineQty: (productId: string, tier: PackTier, qty: number) => void;
   removeLine: (productId: string, tier: PackTier) => void;
   orders: Order[];
-  placeOrder: (customer: string, phone: string, deliverOn: string, window: string, payment: PaymentMethod) => Order;
+  placeOrder: (customer: string, phone: string, deliverOn: string, window: string, payment: PaymentMethod, govId?: string, city?: string) => Order;
   advanceOrder: (id: string) => void;
 
   raw: RawMaterial[];
@@ -207,6 +226,87 @@ export const useStore = create<State>((set, get) => ({
     s.toast(`تم تعديل راتب ${emp.name} إلى ${fmtMoney0(newBase)} — سُجّل في التدقيق`, "brand");
   },
 
+  // تسجيل دفعة كاملة بنقرة (للمشرف وقت تبديل الورديات)
+  batchPunch: (empIds, inMin) => {
+    const s = get();
+    const date = todayKey();
+    let added = 0;
+    let attendance = [...s.attendance];
+    for (const empId of empIds) {
+      const st = attendance.find((a) => a.empId === empId && a.date === date);
+      if (st && st.in != null) continue;
+      attendance = st
+        ? attendance.map((a) => (a.id === st.id ? { ...a, in: inMin, method: "manual" as const, bySupervisor: true } : a))
+        : [...attendance, { id: `at-${Date.now()}-${added}`, empId, date, in: inMin, out: null, method: "manual" as const, bySupervisor: true }];
+      added++;
+    }
+    set({ attendance });
+    s.auditLog(s.user.name, s.user.role, "تسجيل دفعة حضور", `إدخال جماعي لـ${added} عامل الساعة ${fmtMin(inMin)}`);
+    s.toast(`سُجّل حضور ${added} عامل دفعة واحدة الساعة ${fmtMin(inMin)}`, "sage");
+    return added;
+  },
+
+  // ─── بوابة إدارة العمال ────────────────────────────────────────────────────
+  addWorker: (w) => {
+    const s = get();
+    const emp: Employee = {
+      id: `e-${Date.now()}`,
+      name: w.name, phone: w.phone, title: w.title, dept: w.dept, shift: w.shift,
+      wageType: w.wageType, baseSalary: w.baseSalary, dailyRate: w.dailyRate,
+      joinDate: todayKey(), active: true, pin: "1234",
+    };
+    set({ employees: [...s.employees, emp] });
+    s.auditLog(s.user.name, s.user.role, "إضافة عامل جديد", `${w.name} — ${w.title} (${w.dept}) وتوليد رمز QR مشفّر`);
+    s.toast(`تمت إضافة ${w.name} وتوليد بطاقة العمل برمز QR موقّع`, "sage");
+    return emp;
+  },
+  updateWorker: (id, patch) => {
+    const s = get();
+    const emp = s.employees.find((e) => e.id === id)!;
+    set({ employees: s.employees.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
+    s.auditLog(s.user.name, s.user.role, "تعديل بيانات عامل", `${emp.name} — تحديث البيانات الوظيفية`);
+    s.toast(`تم حفظ تعديلات ${emp.name}`, "brand");
+  },
+  archiveWorker: (id) => {
+    const s = get();
+    const emp = s.employees.find((e) => e.id === id)!;
+    set({ employees: s.employees.map((e) => (e.id === id ? { ...e, active: false, archived: true } : e)) });
+    s.auditLog(s.user.name, s.user.role, "أرشفة عامل", `${emp.name} — إيقاف من الحضور والمسير (يظل في السجل)`);
+    s.toast(`أُرشِف ${emp.name} — لن يظهر في كشوف الحضور والرواتب`, "berry");
+  },
+
+  // ─── إنشاء حساب عميل أثناء الطلب (موبايل + OTP) ────────────────────────────
+  otp: null,
+  requestOtp: (phone) => {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    set({ otp: { code, phone } });
+    return code; // في الإنتاج يُرسل عبر SMS — هنا يظهر تجريبيًا
+  },
+  verifyOtp: (code) => {
+    const s = get();
+    return !!s.otp && s.otp.code === code.trim();
+  },
+  registerCustomer: (name, phone, addr) => {
+    const s = get();
+    const existing = s.users.find((u) => u.phone === phone && u.role === "customer");
+    if (existing) {
+      set({
+        users: s.users.map((u) => (u.id === existing.id
+          ? { ...u, savedAddresses: [...(u.savedAddresses ?? []), addr] } : u)),
+      });
+      s.toast(`مرحبًا بعودتك ${name} — حُفظ العنوان الجديد في حسابك`, "sage");
+      return existing;
+    }
+    const nu: User = {
+      id: `u-${Date.now()}`, name, role: "customer", title: "عميل — حساب مُنشأ من الطلب",
+      phone, savedAddresses: [addr],
+    };
+    set({ users: [...s.users, nu], otp: null });
+    s.auditLog("النظام", "customer", "إنشاء حساب عميل", `${name} عبر تحقق OTP على ${phone}`);
+    s.toast(`تم إنشاء حسابك يا ${name} — عنوانك محفوظ للطلبات القادمة`, "sage");
+    return nu;
+  },
+
   online: typeof navigator !== "undefined" ? navigator.onLine : true,
   setOnline: (v) => {
     const s = get();
@@ -312,15 +412,17 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ cart: s.cart.filter((l) => !(l.productId === productId && l.tier === tier)) })),
 
   orders: ORDERS_SEED,
-  placeOrder: (customer, phone, deliverOn, window, payment) => {
+  placeOrder: (customer, phone, deliverOn, window, payment, govId, city) => {
     const s = get();
-    const sum = cartSummary(s.cart, s.products);
+    const sum = cartSummary(s.cart, s.products, govId);
+    const govName = GOVERNORATES.find((g) => g.id === govId)?.name;
     const order: Order = {
       id: `OW-${2420 + s.orders.length}`,
       customer, customerPhone: phone,
       lines: [...s.cart],
       subtotal: sum.subtotal, discount: sum.discount, deliveryFee: sum.deliveryFee, total: sum.total,
       status: "pending", placedAt: todayKey(), deliverOn, window, payment,
+      governorate: govName, city,
     };
     set({
       orders: [order, ...s.orders],

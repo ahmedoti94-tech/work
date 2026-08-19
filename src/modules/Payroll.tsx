@@ -48,7 +48,7 @@ export default function Payroll() {
 
   const sendSlipWhatsApp = (emp: Employee, res: PayrollResult) => {
     const text =
-      `قسيمة راتب — ${monthLabel(month)}\nمصنع أوفنرايت للبسكويت\n\n` +
+      `قسيمة راتب — ${monthLabel(month)}\nالشركة المصرية للصناعات الغذائية\n\n` +
       `الاسم: ${emp.name}\nالمسمى: ${emp.title}\n\n` +
       `أيام الحضور: ${res.presentDays} من ${res.workDays}\n` +
       `الراتب الأساسي: ${fmtMoney(res.baseEarned)}\n` +
@@ -148,7 +148,7 @@ export default function Payroll() {
                 </select>
               </Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="المبلغ (ر.س)"><input type="number" className={`${inputCls} num`} value={advAmt} onChange={(e) => setAdvAmt(e.target.value)} min={50} step={50} /></Field>
+                <Field label="المبلغ (ج.م)"><input type="number" className={`${inputCls} num`} value={advAmt} onChange={(e) => setAdvAmt(e.target.value)} min={50} step={50} /></Field>
                 <Field label="السبب"><input className={inputCls} value={advNote} onChange={(e) => setAdvNote(e.target.value)} /></Field>
               </div>
               <Btn className="w-full" onClick={() => {
@@ -193,7 +193,7 @@ export default function Payroll() {
                 </Field>
                 {salaryEmp && (
                   <>
-                    <Field label="الراتب الجديد (ر.س)">
+                    <Field label="الراتب الجديد (ج.م)">
                       <input type="number" className={`${inputCls} num`} value={salaryVal} onChange={(e) => setSalaryVal(e.target.value)} step={100} />
                     </Field>
                     <Btn className="w-full" variant="butter" onClick={() => {
@@ -217,8 +217,8 @@ export default function Payroll() {
           <div id="print-area" className="rounded-xl border border-line bg-surface p-6">
             <div className="flex items-start justify-between">
               <div>
-                <p className="font-display text-xl font-bold">أوفنرايت لصناعة البسكويت</p>
-                <p className="text-[12px] text-mute">المنطقة الصناعية الثانية — الرياض · س.ت 1010XXXXXX</p>
+                <p className="font-display text-xl font-bold">الشركة المصرية للصناعات الغذائية</p>
+                <p className="text-[12px] text-mute">المنطقة الصناعية — ٦ أكتوبر، الجيزة · ب.ض 512-345-678 · س.ت ٤٥٦٧٨٩</p>
               </div>
               <span className="stamp-in rounded-lg border-2 border-brand px-3 py-1.5 font-display text-[13px] font-bold text-brand">
                 {finalizedMonths.includes(slip.res.monthKey) ? "معتمدة" : "مسودة"}
@@ -274,7 +274,7 @@ export default function Payroll() {
             </div>
 
             <p className="mt-4 text-center text-[10.5px] text-mute">
-              أُصدرت إلكترونيًا من نظام أوفنرايت — للاستفسار تواصل مع الموارد البشرية · وثيقة {finalizedMonths.includes(slip.res.monthKey) ? "نهائية" : "مبدئية"}
+              أُصدرت إلكترونيًا من نظام الشركة — للاستفسار تواصل مع الموارد البشرية · وثيقة {finalizedMonths.includes(slip.res.monthKey) ? "نهائية" : "مبدئية"}
             </p>
           </div>
         )}

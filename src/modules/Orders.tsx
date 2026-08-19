@@ -45,7 +45,7 @@ export default function Orders() {
 
   const notifyClient = (o: Order) => {
     const text =
-      `تحديث طلبكم ${o.id} — مصنع أوفنرايت\n\n` +
+      `تحديث طلبكم ${o.id} — الشركة المصرية للصناعات الغذائية\n\n` +
       `الحالة الحالية: ${STATUS_AR[o.status]}\n` +
       (o.status === "delivered"
         ? "تم تسليم الطلب — نتمنى أن تنال منتجاتنا رضاكم"

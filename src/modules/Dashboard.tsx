@@ -4,7 +4,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend,
   Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { BESTSELLERS, REVENUE_SERIES, SUPERVISOR_PHONE } from "../lib/data";
+import { BESTSELLERS, COMPANY, REVENUE_SERIES, SUPERVISOR_PHONE } from "../lib/data";
 import {
   MONTHS_AR_SHORT, addDays, computePayroll, dateKey, dayStats, fmtDateShort,
   fmtMoney0, monthKeyNow, monthLabel, prevMonthKey, todayKey, waLink,
@@ -26,12 +26,11 @@ const tooltipStyle = {
 function daysLeft(producedAt: string, expiryDays: number) {
   const [y, m, d] = producedAt.split("-").map(Number);
   const exp = addDays(new Date(y, m - 1, d), expiryDays);
-  const now = new Date();
-  return Math.ceil((exp.getTime() - now.getTime()) / 86400000);
+  return Math.ceil((exp.getTime() - new Date().getTime()) / 86400000);
 }
 
 export default function Dashboard() {
-  const { user, employees, attendance, orders, products, advances, batches, raw, leaves, setView, finalizedMonths } = useStore();
+  const { user, employees, attendance, orders, products, advances, batches, leaves, raw, setView, finalizedMonths } = useStore();
   const role = user.role;
   const month = monthKeyNow();
   const today = todayKey();
@@ -53,10 +52,14 @@ export default function Dashboard() {
   const elapsed = workdaysElapsed(month);
   const projected = (payrollNow / Math.max(1, elapsed)) * wd;
 
-  const monthRevenue = REVENUE_SERIES[REVENUE_SERIES.length - 1].revenue * 1000;
+  const last = REVENUE_SERIES[REVENUE_SERIES.length - 1];
+  const revenueK = last.revenue * 1000;
+  const opexK = (last.materials + last.payroll) * 1000;
+  const profitK = revenueK - opexK;
+  const margin = Math.round((profitK / revenueK) * 100);
+
   const activeOrders = orders.filter((o) => o.status !== "delivered");
   const openAdvances = advances.filter((a) => !a.settledMonth).reduce((s, a) => s + a.amount, 0);
-
   const lowStock = raw.filter((r) => r.qty < r.reorderPoint);
   const expiring = batches
     .map((b) => ({ ...b, left: daysLeft(b.producedAt, b.expiryDays), name: products.find((p) => p.id === b.productId)?.name ?? "" }))
@@ -69,22 +72,25 @@ export default function Dashboard() {
   const pieColors = ["var(--t-butter)", "var(--t-brand)", "var(--t-cocoa)", "var(--t-sage)"];
 
   const greeting = new Date().getHours() < 12 ? "صباح الخير" : new Date().getHours() < 17 ? "مساء النور" : "مساء الخير";
+  const firstName = user.name.split(" ")[0];
 
   const sendDailyDigest = () => {
-    const text = `تقرير ${fmtDateShort(today)} — مصنع أوفنرايت\n\n• الحضور: ${present} من ${active.length} (متأخرون: ${late})\n• طلبات نشطة: ${activeOrders.length}\n• مواد تحت حد الطلب: ${lowStock.length}\n• دفعات تقترب صلاحيتها: ${expiring.length}`;
+    const text = `تقرير ${fmtDateShort(today)} — ${COMPANY.name}\n\n• الحضور: ${present} من ${active.length} (متأخرون: ${late})\n• طلبات نشطة: ${activeOrders.length}\n• مواد تحت حد الطلب: ${lowStock.length}\n• دفعات تقترب صلاحيتها: ${expiring.length}`;
     window.open(waLink(SUPERVISOR_PHONE, text), "_blank");
   };
 
   return (
     <div className="space-y-5">
-      {/* الترويسة + شريط الحالة الحي */}
+      {/* الترويسة */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="label-xs">{fmtDateShort(today)} · {monthLabel(month)}</p>
           <h1 className="mt-1 font-display text-[28px] font-bold leading-tight tracking-tight">
-            {greeting}، {user.name.split(" ")[0]}
+            {greeting}، {role === "super" ? `أ. ${firstName}` : firstName}
           </h1>
-          <p className="mt-0.5 text-[13px] text-mute">هذه نظرة سريعة على حال المصنع اليوم — كل الأرقام محدثة لحظيًا</p>
+          <p className="mt-0.5 text-[13px] text-mute">
+            {role === "super" ? "نظرة المالك: الربحية والإنتاج والتكاليف بالجنيه المصري" : "نظرة سريعة على حال المصنع اليوم — كل الأرقام محدثة لحظيًا"}
+          </p>
         </div>
         {(role === "super" || role === "hr" || role === "production") && (
           <Btn variant="whatsapp" onClick={sendDailyDigest}>
@@ -93,40 +99,75 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* شريط المصنع الحي */}
       <div className="overflow-hidden rounded-xl border border-line bg-ink text-bg dark:bg-cream dark:text-sunken">
         <div className="marquee flex w-max items-center gap-8 whitespace-nowrap px-6 py-2.5 text-[12.5px] font-bold">
           {[0, 1].map((dup) => (
             <div key={dup} className="flex items-center gap-8">
-              <span>الأفران تعمل — دفعة الصباح في التغليف</span>
+              <span>الوردية الصباحية تعمل — دفعة الدايجستيف في التغليف</span>
               <span className="text-butter">خصم ١٤٪ على طلبات ٥٠ كرتونة فأكثر</span>
               <span>حضور اليوم: {present} من {active.length}</span>
               <span className="text-butter">{activeOrders.length} طلب قيد التجهيز</span>
-              <span>آخر شحنة: OW-2417 غادرت المستودع</span>
-              <span className="text-butter">{lowStock.length} مادة خام تحت حد إعادة الطلب</span>
+              <span>آخر شحنة: OW-2417 غادرت إلى شبرا</span>
+              <span className="text-butter">{lowStock.length} خامة تحت حد إعادة الطلب</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* المؤشرات */}
+      {/* مؤشرات المالك: أرباح وخسائر */}
+      {role === "super" && (
+        <div className="card relative overflow-hidden p-5">
+          <div className="dotgrid absolute inset-0 opacity-20" />
+          <div className="relative">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="font-display text-[19px] font-bold">حساب الأرباح والخسائر — {monthLabel(month)}</h2>
+                <p className="text-[12px] font-semibold text-mute">الإيرادات مقابل تكلفة التشغيل (خامات + رواتب) بالجنيه المصري</p>
+              </div>
+              <Badge tone={margin >= 20 ? "sage" : "butter"}>هامش {margin}٪</Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                { l: "إيرادات الشهر", v: fmtMoney0(revenueK), s: "مبيعات جملة وتجزئة", tone: "text-ink" },
+                { l: "تكلفة التشغيل", v: fmtMoney0(opexK), s: `خامات ${fmtMoney0(last.materials * 1000)} + رواتب ${fmtMoney0(last.payroll * 1000)}`, tone: "text-berry" },
+                { l: "مجمل الربح", v: fmtMoney0(profitK), s: "قبل المصروفات الإدارية", tone: "text-sage" },
+                { l: "رواتب متوقعة للشهر", v: fmtMoney0(projected), s: `${active.length} عامل — يومي وشهري`, tone: "text-brand" },
+              ].map((c, i) => (
+                <motion.div key={c.l} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+                  className="rounded-xl border border-line bg-surface/85 p-4">
+                  <p className="label-xs">{c.l}</p>
+                  <p className={`num mt-1.5 font-display text-[22px] font-bold leading-none ${c.tone}`}>{c.v}</p>
+                  <p className="mt-1.5 text-[10.5px] font-semibold text-mute">{c.s}</p>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* المؤشرات السريعة */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {role === "sales" || role === "customer" ? (
           <>
-            <Stat label="إيرادات الشهر" value={fmtMoney0(monthRevenue)} sub="آخر ٣٠ يومًا" icon="chart" />
+            <Stat label="إيرادات الشهر" value={fmtMoney0(revenueK)} sub="آخر ٣٠ يومًا" icon="chart" />
             <Stat label="الطلبات النشطة" value={activeOrders.length} sub="قيد التجهيز والشحن" icon="truck" tone="butter" />
-            <Stat label="منتجات الكتالوج" value={products.length} sub="٨ عائلات نكهات" icon="shop" tone="sage" />
-            <Stat label="حد التوصيل المجاني" value="1,500 ر.س" sub="فما فوق" icon="boxes" tone="cocoa" />
+            <Stat label="منتجات الكتالوج" value={products.length} sub="٨ خطوط بسكويت" icon="shop" tone="sage" />
+            <Stat label="التوصيل المجاني" value="من 1,200 ج.م" sub="أو برسوم المحافظة" icon="boxes" tone="cocoa" />
+          </>
+        ) : role === "production" ? (
+          <>
+            <Stat label="حضور الوردية" value={`${present}/${active.length}`} sub={`متأخرون: ${late}`} icon="users" tone={present / active.length > 0.85 ? "sage" : "butter"} />
+            <Stat label="مواد تحت حد الطلب" value={lowStock.length} sub={lowStock[0] ? `أهمها: ${lowStock[0].name}` : "المخزون سليم"} icon="alert" tone={lowStock.length ? "berry" : "sage"} />
+            <Stat label="دفعات تنتهي قريبًا" value={expiring.length} sub="خلال ٢١ يومًا" icon="boxes" tone={expiring.length ? "butter" : "sage"} />
+            <Stat label="الطلبات النشطة" value={activeOrders.length} sub="جاهزة للتغليف" icon="truck" tone="butter" />
           </>
         ) : (
           <>
             <Stat label="حضور اليوم" value={`${present}/${active.length}`} sub={`متأخرون: ${late} · غائبون: ${absent}`} icon="users" tone={present / active.length > 0.85 ? "sage" : "butter"} />
-            <Stat label="راتب الشهر حتى الآن" value={fmtMoney0(payrollNow)} sub={`متوقع كامل الشهر: ${fmtMoney0(projected)}`} icon="payroll" />
+            <Stat label="رواتب الشهر حتى الآن" value={fmtMoney0(payrollNow)} sub={`متوقع كامل الشهر: ${fmtMoney0(projected)}`} icon="payroll" />
             <Stat label="الطلبات النشطة" value={activeOrders.length} sub={`${orders.filter((o) => o.status === "shipped").length} بالشحن الآن`} icon="truck" tone="butter" />
-            {role === "production" ? (
-              <Stat label="مواد تحت حد الطلب" value={lowStock.length} sub={lowStock[0] ? `أهمها: ${lowStock[0].name}` : "المخزون سليم"} icon="alert" tone={lowStock.length ? "berry" : "sage"} />
-            ) : (
-              <Stat label="سلف مفتوحة" value={fmtMoney0(openAdvances)} sub="تُخصم من مسير الشهر" icon="alert" tone={openAdvances > 0 ? "butter" : "sage"} />
-            )}
+            <Stat label="سلف مفتوحة" value={fmtMoney0(openAdvances)} sub="تُخصم من مسير الشهر" icon="alert" tone={openAdvances > 0 ? "butter" : "sage"} />
           </>
         )}
       </div>
@@ -134,7 +175,7 @@ export default function Dashboard() {
       <div className="grid gap-4 lg:grid-cols-3">
         {/* الإيرادات */}
         <div className="card p-4 lg:col-span-2">
-          <SectionHead title="الإيرادات مقابل تكلفة الرواتب" desc="١٢ شهرًا — بالآلاف (ر.س)" />
+          <SectionHead title="الإيرادات مقابل تكلفة التشغيل" desc="١٢ شهرًا — بالآلاف (ج.م)" />
           <div dir="ltr" className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={REVENUE_SERIES} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
@@ -151,9 +192,9 @@ export default function Dashboard() {
                 <CartesianGrid stroke="var(--t-line)" strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="month" tickFormatter={(m: number) => MONTHS_AR_SHORT[(m - 1) % 12]} tick={{ fill: "var(--t-mute)", fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: "var(--t-mute)", fontSize: 11 }} axisLine={false} tickLine={false} width={34} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v: number | string, n: string) => [`${Number(v).toLocaleString()} ألف ر.س`, n === "revenue" ? "الإيرادات" : "الرواتب"]} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v: number | string, n: string) => [`${Number(v).toLocaleString()} ألف ج.م`, n === "revenue" ? "الإيرادات" : "الخامات"]} />
                 <Area type="monotone" dataKey="revenue" stroke="var(--t-brand)" strokeWidth={2.4} fill="url(#gRev)" />
-                <Area type="monotone" dataKey="payroll" stroke="var(--t-cocoa)" strokeWidth={2} fill="url(#gPay)" />
+                <Area type="monotone" dataKey="materials" stroke="var(--t-cocoa)" strokeWidth={2} fill="url(#gPay)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -201,9 +242,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* الإنتاج مقابل الطاقة */}
+        {/* الإنتاجية مقابل التكلفة */}
         <div className="card p-4">
-          <SectionHead title="الإنتاج الفعلي ضد الطاقة" desc="خطوط الخبز الثلاثة" />
+          <SectionHead title="الإنتاج الفعلي ضد الخامات" desc="مؤشر كفاءة التشغيل" />
           <div dir="ltr" className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={REVENUE_SERIES.slice(-8)} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
@@ -212,8 +253,8 @@ export default function Dashboard() {
                 <YAxis tick={{ fill: "var(--t-mute)", fontSize: 11 }} axisLine={false} tickLine={false} width={30} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Bar dataKey="production" fill="var(--t-butter)" radius={[5, 5, 0, 0]} barSize={14} name="الإنتاج" />
-                <Line type="monotone" dataKey="revenue" stroke="var(--t-brand)" strokeWidth={2.2} dot={false} name="الإيرادات" />
-                <Legend wrapperStyle={{ fontFamily: "Tajawal", fontSize: 11, direction: "rtl" }} formatter={(v: string) => (v === "الإنتاج" ? v : "الإيرادات")} />
+                <Line type="monotone" dataKey="materials" stroke="var(--t-cocoa)" strokeWidth={2.2} dot={false} name="الخامات" />
+                <Legend wrapperStyle={{ fontFamily: "Tajawal", fontSize: 11, direction: "rtl" }} formatter={(v: string) => (v === "الإنتاج" ? v : "الخامات")} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -271,14 +312,14 @@ export default function Dashboard() {
       {/* أحدث الطلبات */}
       <div className="card overflow-hidden">
         <SectionHead title="أحدث الطلبات" desc="آخر ٥ طلبات واردة"
-          actions={NAV_show(user.role) ? <Btn variant="outline" size="sm" onClick={() => setView("orders")}>عرض الكل <Icon name="chevron" size={14} className="rotate-180" /></Btn> : undefined} />
+          actions={user.role !== "customer" ? <Btn variant="outline" size="sm" onClick={() => setView("orders")}>عرض الكل <Icon name="chevron" size={14} className="rotate-180" /></Btn> : undefined} />
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-[13px]">
+          <table className="w-full min-w-[620px] text-[13px]">
             <thead>
               <tr className="border-b border-line text-[11px] font-bold text-mute">
                 <th className="px-4 py-2.5 text-start">الطلب</th>
                 <th className="px-3 py-2.5 text-start">العميل</th>
-                <th className="px-3 py-2.5 text-start">التاريخ</th>
+                <th className="px-3 py-2.5 text-start">المحافظة</th>
                 <th className="px-3 py-2.5 text-start">الإجمالي</th>
                 <th className="px-4 py-2.5 text-start">الحالة</th>
               </tr>
@@ -288,7 +329,7 @@ export default function Dashboard() {
                 <tr key={o.id} className="border-b border-line/60 last:border-0 hover:bg-raise/60">
                   <td className="num px-4 py-2.5 font-bold text-brand">{o.id}</td>
                   <td className="px-3 py-2.5 font-semibold">{o.customer}</td>
-                  <td className="px-3 py-2.5 text-mute">{fmtDateShort(o.placedAt)}</td>
+                  <td className="px-3 py-2.5 text-mute">{o.governorate ?? "—"}</td>
                   <td className="num px-3 py-2.5 font-bold">{fmtMoney0(o.total)}</td>
                   <td className="px-4 py-2.5">
                     <Badge tone={o.status === "delivered" ? "sage" : o.status === "shipped" ? "brand" : o.status === "baking" ? "butter" : "mute"}>
@@ -303,12 +344,8 @@ export default function Dashboard() {
       </div>
 
       <p className="text-center text-[11px] text-mute">
-        {finalizedMonths.includes(prevMonthKey(month)) ? `مسير ${monthLabel(prevMonthKey(month))} معتمد ومُصدر` : `مسير الشهر السابق بانتظار الاعتماد — ${monthLabel(prevMonthKey(month))}`}
+        {finalizedMonths.includes(prevMonthKey(month)) ? `مسير ${monthLabel(prevMonthKey(month))} معتمد ومُصدر` : `مسير الشهر السابق بانتظار اعتماد الإدارة — ${monthLabel(prevMonthKey(month))}`}
       </p>
     </div>
   );
-}
-
-function NAV_show(role: string) {
-  return role !== "customer";
 }

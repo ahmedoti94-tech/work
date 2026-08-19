@@ -133,7 +133,7 @@ export default function Attendance() {
       const t = rec?.in != null ? `حضور ${fmtMin(rec.in)}${rec.out != null ? ` — انصراف ${fmtMin(rec.out)}` : ""}` : st.label;
       return `• ${emp.name}: ${t}`;
     });
-    const text = `ملخص حضور ${fmtDateShort(date)} — مصنع أوفنرايت\n\nحاضرون: ${presentCount} من ${activeEmps.length} | متأخرون: ${lateCount}\n\n${lines.join("\n")}`;
+    const text = `ملخص حضور ${fmtDateShort(date)} — الشركة المصرية للصناعات الغذائية\n\nحاضرون: ${presentCount} من ${activeEmps.length} | متأخرون: ${lateCount}\n\n${lines.join("\n")}`;
     window.open(waLink(SUPERVISOR_PHONE, text), "_blank");
     toast("جارٍ فتح واتساب لإرسال ملخص الحضور اليومي للمشرف", "sage");
   };

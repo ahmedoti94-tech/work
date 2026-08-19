@@ -14,20 +14,22 @@ export const NAV_ACCESS: Record<View, Role[]> = {
   marketplace: ["super", "sales", "customer"],
   orders: ["super", "sales", "customer"],
   security: ["super", "hr"],
+  workers: ["super", "hr"],
   inventory: ["super", "production"],
   system: ["super"],
 };
 
 const NAV: { key: View; label: string; icon: IconName; group: string }[] = [
   { key: "dashboard", label: "لوحة التحكم", icon: "dashboard", group: "عام" },
-  { key: "attendance", label: "سجل الحضور والانصراف", icon: "clock", group: "المصنع والموارد البشرية" },
-  { key: "payroll", label: "مسير الرواتب", icon: "payroll", group: "المصنع والموارد البشرية" },
-  { key: "leaves", label: "الإجازات والأذونات", icon: "leave", group: "المصنع والموارد البشرية" },
+  { key: "workers", label: "بوابة العمال", icon: "idcard", group: "المصنع والعمال" },
+  { key: "attendance", label: "سجل الحضور والانصراف", icon: "clock", group: "المصنع والعمال" },
+  { key: "payroll", label: "مسير الرواتب", icon: "payroll", group: "المصنع والعمال" },
+  { key: "leaves", label: "الإجازات والأذونات", icon: "leave", group: "المصنع والعمال" },
   { key: "marketplace", label: "كتالوج الجملة", icon: "shop", group: "المبيعات والتجارة" },
   { key: "orders", label: "تتبع الطلبات", icon: "truck", group: "المبيعات والتجارة" },
-  { key: "inventory", label: "إدارة المخزون", icon: "boxes", group: "المصنع والموارد البشرية" },
-  { key: "security", label: "مركز الأمان", icon: "shield", group: "الإدارة" },
-  { key: "system", label: "النظام والتدقيق", icon: "sheet", group: "الإدارة" },
+  { key: "inventory", label: "إدارة المخزون", icon: "boxes", group: "المصنع والعمال" },
+  { key: "security", label: "مركز الأمان", icon: "shield", group: "الإدارة العليا" },
+  { key: "system", label: "النظام والتدقيق", icon: "sheet", group: "الإدارة العليا" },
 ];
 
 function Logo({ size = 38 }: { size?: number }) {
@@ -65,8 +67,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex items-center gap-3 px-5 pb-5 pt-6">
         <Logo />
         <div className="leading-tight">
-          <p className="font-display text-[17px] font-bold">أوفنرايت</p>
-          <p className="text-[10.5px] font-bold text-mute">منصة مصنع البسكويت</p>
+          <p className="font-display text-[15.5px] font-bold leading-snug">المصرية للصناعات الغذائية</p>
+          <p className="text-[10.5px] font-bold text-mute">إدارة المصنع والمتجر — مصر</p>
         </div>
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
@@ -118,7 +120,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     const today = todayKey();
     const active = s.employees.filter((e) => e.active);
     const present = active.filter((e) => s.attendance.some((a) => a.empId === e.id && a.date === today && a.in != null)).length;
-    const text = `تقرير ${fmtDateShort(today)} — مصنع أوفنرايت\n\n• الحضور: ${present} من ${active.length}\n• طلبات نشطة: ${s.orders.filter((o) => o.status !== "delivered").length}\n• مواد تحت حد الطلب: ${s.raw.filter((r) => r.qty < r.reorderPoint).length}`;
+    const text = `تقرير ${fmtDateShort(today)} — الشركة المصرية للصناعات الغذائية\n\n• الحضور: ${present} من ${active.length}\n• طلبات نشطة: ${s.orders.filter((o) => o.status !== "delivered").length}\n• مواد تحت حد الطلب: ${s.raw.filter((r) => r.qty < r.reorderPoint).length}`;
     window.open(waLink(SUPERVISOR_PHONE, text), "_blank");
   };
 
@@ -228,7 +230,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <main className="relative px-4 py-5 pb-28 lg:px-7 lg:py-7 lg:pb-10">{children}</main>
 
         <footer className="relative border-t border-line px-4 py-5 text-center text-[11px] text-mute lg:px-7">
-          أوفنرايت لصناعة البسكويت — منصة تشغيل المصنع: حضور ورواتب وكتالوج جملة ومخزون، على بيانات تشغيلية محاكاة
+          الشركة المصرية للصناعات الغذائية — منصة تشغيل المصنع: عمال وحضور ورواتب وكتالوج جملة ومخزون، على بيانات تشغيلية محاكاة
         </footer>
       </div>
 

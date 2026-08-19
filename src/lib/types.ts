@@ -1,12 +1,32 @@
 export type Role = "super" | "hr" | "production" | "sales" | "customer";
 
+export interface SavedAddress {
+  id: string;
+  govId: string;
+  city: string;
+  street: string;
+  phone: string;
+}
+
 export interface User {
   id: string;
   name: string;
   role: Role;
   empId?: string;
   title: string;
+  phone?: string;
+  savedAddresses?: SavedAddress[];
 }
+
+/** مصفوفة التوصيل للمحافظات المصرية */
+export interface Governorate {
+  id: string;
+  name: string;
+  fee: number;      // جنيه مصري
+  days: string;     // مدة التوصيل المتوقعة
+}
+
+export type WageType = "daily" | "monthly";
 
 export interface Employee {
   id: string;
@@ -14,9 +34,12 @@ export interface Employee {
   title: string;
   dept: string;
   shift: ShiftKey;
-  baseSalary: number;
+  wageType: WageType;      // أجر يومي (يومية) أو راتب شهري
+  baseSalary: number;      // الشهري بالجنيه
+  dailyRate?: number;      // اليومية بالجنيه
   joinDate: string;
   active: boolean;
+  archived?: boolean;
   pin: string;
   phone: string;
 }
@@ -135,6 +158,8 @@ export interface Order {
   deliverOn: string;
   window: string;
   payment: PaymentMethod;
+  governorate?: string;
+  city?: string;
 }
 
 export interface RawMaterial {
@@ -145,6 +170,7 @@ export interface RawMaterial {
   reorderPoint: number;
   capacity: number;
   supplier: string;
+  costPerUnit: number;  // جنيه مصري
 }
 
 export interface Batch {
@@ -202,4 +228,5 @@ export type View =
   | "orders"
   | "inventory"
   | "security"
+  | "workers"
   | "system";
