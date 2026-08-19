@@ -1,293 +1,269 @@
 import type {
-  Advance,
-  AttendanceRecord,
-  AuditEntry,
-  Batch,
-  Employee,
-  LeaveRequest,
-  Order,
-  Product,
-  RawMaterial,
-  User,
+  Advance, AttendanceRecord, AuditEntry, Batch, Employee, LeaveRequest,
+  Order, Product, RawMaterial, User,
 } from "./types";
-import { addDays, dateKey, isWorkday, nowMin, todayKey } from "./payroll";
+import { addDays, dateKey, isWorkday, monthKeyOf, prevMonthKey, todayKey } from "./payroll";
 
-// Deterministic PRNG so the factory data is stable across reloads
-export function mulberry32(seed: number) {
-  let a = seed;
-  return () => {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const rnd = mulberry32(1987);
-const between = (a: number, b: number) => a + rnd() * (b - a);
-const pick = <T,>(arr: T[]): T => arr[Math.floor(rnd() * arr.length)];
-
-const img = (id: string) => `https://image.qwenlm.ai/generated-images/${id}/_result.png`;
-
-// ─── Users (role switcher = demo RBAC sign-in) ─────────────────────────────
+// ─── الهويات (RBAC) ─────────────────────────────────────────────────────────
 export const USERS: User[] = [
-  { id: "u-samir", name: "Samir Qassab", role: "super_admin", title: "General Manager" },
-  { id: "u-layla", name: "Layla Haddad", role: "hr", title: "HR Manager" },
-  { id: "u-omar", name: "Omar Suleiman", role: "production", title: "Production & Inventory Mgr" },
-  { id: "u-nadia", name: "Nadia Rahman", role: "sales", title: "Senior Sales Rep" },
-  { id: "u-mariam", name: "Mariam Adel", role: "customer", title: "Procurement — Al-Noor Markets", org: "Al-Noor Markets Co." },
+  { id: "u1", name: "عبدالله الراشد", role: "super", title: "المدير العام", empId: "e1" },
+  { id: "u2", name: "منيرة السالم", role: "hr", title: "مديرة الموارد البشرية" },
+  { id: "u3", name: "سعد الحربي", role: "production", title: "مدير الإنتاج والمخزون" },
+  { id: "u4", name: "يزيد العتيبي", role: "sales", title: "مندوب مبيعات الجملة" },
+  { id: "u5", name: "أحمد الغامدي", role: "customer", title: "عامل — بوابة ذاتية", empId: "e2" },
 ];
 
-// ─── Employees ──────────────────────────────────────────────────────────────
+// ─── الموظفون — الرقم السري للتجربة: 1234 ──────────────────────────────────
 export const EMPLOYEES: Employee[] = [
-  { id: "e01", name: "Ahmed Mansour", code: "OW-0114", title: "Line A Supervisor", dept: "Production", shift: "morning", baseSalary: 2150, joinDate: "2016-03-12", hue: 24, active: true },
-  { id: "e02", name: "Fatima Zahra", code: "OW-0127", title: "Dough Mixer Operator", dept: "Production", shift: "morning", baseSalary: 1480, joinDate: "2019-07-01", hue: 200, active: true },
-  { id: "e03", name: "Yusuf Karim", code: "OW-0133", title: "Oven Operator", dept: "Production", shift: "evening", baseSalary: 1620, joinDate: "2018-01-20", hue: 262, active: true },
-  { id: "e04", name: "Salma Idris", code: "OW-0141", title: "Packaging Lead", dept: "Packaging", shift: "morning", baseSalary: 1390, joinDate: "2021-02-14", hue: 330, active: true },
-  { id: "e05", name: "Hassan Farouk", code: "OW-0152", title: "Forklift / Warehouse", dept: "Warehouse", shift: "evening", baseSalary: 1240, joinDate: "2020-10-05", hue: 150, active: true },
-  { id: "e06", name: "Nour ElDin", code: "OW-0160", title: "QC Technician", dept: "Quality", shift: "morning", baseSalary: 1710, joinDate: "2017-09-18", hue: 45, active: true },
-  { id: "e07", name: "Rania Boutros", code: "OW-0168", title: "Baker — Line B", dept: "Production", shift: "morning", baseSalary: 1320, joinDate: "2022-04-11", hue: 12, active: true },
-  { id: "e08", name: "Karim Aziz", code: "OW-0171", title: "Maintenance Engineer", dept: "Maintenance", shift: "night", baseSalary: 1980, joinDate: "2015-06-30", hue: 210, active: true },
-  { id: "e09", name: "Dalia Mostafa", code: "OW-0183", title: "Packaging Operator", dept: "Packaging", shift: "evening", baseSalary: 1150, joinDate: "2023-01-09", hue: 285, active: true },
-  { id: "e10", name: "Tariq Bishara", code: "OW-0190", title: "Syrup & Filling Op.", dept: "Production", shift: "evening", baseSalary: 1280, joinDate: "2021-11-22", hue: 90, active: true },
-  { id: "e11", name: "Mona Salib", code: "OW-0197", title: "Lab Analyst", dept: "Quality", shift: "morning", baseSalary: 1560, joinDate: "2019-05-04", hue: 175, active: true },
-  { id: "e12", name: "George Antoun", code: "OW-0204", title: "Night Watch / Utilities", dept: "Maintenance", shift: "night", baseSalary: 1090, joinDate: "2022-08-15", hue: 60, active: true },
+  { id: "e1", name: "عبدالله الراشد", title: "المدير العام", dept: "الإدارة", shift: "morning", baseSalary: 12000, joinDate: "2019-03-01", active: true, pin: "1234", phone: "966501111111" },
+  { id: "e2", name: "أحمد الغامدي", title: "مشرف خط الإنتاج", dept: "الإنتاج", shift: "morning", baseSalary: 6200, joinDate: "2020-06-15", active: true, pin: "1234", phone: "966502222222" },
+  { id: "e3", name: "سارة العتيبي", title: "فنية مراقبة الجودة", dept: "الجودة", shift: "morning", baseSalary: 5400, joinDate: "2021-01-10", active: true, pin: "1234", phone: "966503333333" },
+  { id: "e4", name: "خالد المطيري", title: "فني أفران", dept: "الإنتاج", shift: "evening", baseSalary: 5000, joinDate: "2020-09-01", active: true, pin: "1234", phone: "966504444444" },
+  { id: "e5", name: "نورة القحطاني", title: "عاملة تغليف", dept: "التغليف", shift: "morning", baseSalary: 3800, joinDate: "2022-02-20", active: true, pin: "1234", phone: "966505555555" },
+  { id: "e6", name: "فهد الدوسري", title: "عامل مستودع", dept: "المستودع", shift: "evening", baseSalary: 3600, joinDate: "2021-11-05", active: true, pin: "1234", phone: "966506666666" },
+  { id: "e7", name: "ريم الشهري", title: "محاسبة", dept: "المالية", shift: "morning", baseSalary: 5800, joinDate: "2020-04-12", active: true, pin: "1234", phone: "966507777777" },
+  { id: "e8", name: "يوسف الزهراني", title: "فني صيانة", dept: "الصيانة", shift: "night", baseSalary: 4600, joinDate: "2021-07-30", active: true, pin: "1234", phone: "966508888888" },
+  { id: "e9", name: "مها الحربي", title: "عاملة إنتاج", dept: "الإنتاج", shift: "morning", baseSalary: 3700, joinDate: "2022-08-14", active: true, pin: "1234", phone: "966509999999" },
+  { id: "e10", name: "عبدالرحمن السبيعي", title: "سائق توزيع", dept: "التوزيع", shift: "morning", baseSalary: 4000, joinDate: "2021-05-19", active: true, pin: "1234", phone: "966511111111" },
+  { id: "e11", name: "لطيفة العنزي", title: "عاملة تغليف", dept: "التغليف", shift: "evening", baseSalary: 3600, joinDate: "2023-01-08", active: true, pin: "1234", phone: "966522222222" },
+  { id: "e12", name: "ماجد الشمري", title: "عامل عجينة", dept: "الإنتاج", shift: "night", baseSalary: 3900, joinDate: "2022-10-25", active: false, pin: "1234", phone: "966533333333" },
 ];
 
-// ─── Attendance history (last 45 work days + partial today) ────────────────
-const SHIFT_START: Record<string, number> = { morning: 360, evening: 840, night: 1320 };
-const SHIFT_END: Record<string, number> = { morning: 840, evening: 1320, night: 1800 };
+export const SUPERVISOR_PHONE = "966501111111";
 
-function buildAttendance(): AttendanceRecord[] {
-  const out: AttendanceRecord[] = [];
+// ─── مولّد بيانات الحضور (٤٥ يومًا) ─────────────────────────────────────────
+function genAttendance(): AttendanceRecord[] {
+  const recs: AttendanceRecord[] = [];
   const today = new Date();
-  const now = nowMin();
-  for (let back = 45; back >= 0; back--) {
+  let seq = 1;
+  for (let back = 44; back >= 0; back--) {
     const d = addDays(today, -back);
     if (!isWorkday(d)) continue;
     const key = dateKey(d);
-    const isToday = back === 0;
-    EMPLOYEES.forEach((emp, idx) => {
-      // approved-leave absences are handled by the leave seed (e03 this month)
-      if (emp.id === "e03" && back <= 4 && back >= 2) return;
-      const attendChance = back === 0 ? 1 : 0.9;
-      if (rnd() > attendChance && !isToday) return; // unplanned absence
-      const jitterIn = Math.round(between(-8, 26));
-      let cin = SHIFT_START[emp.shift] + jitterIn;
-      if (isToday) {
-        // only some of the crew has punched in so far this morning
-        if (idx >= 8) return;
-        cin = Math.max(1, Math.min(cin, now - Math.round(between(3, 40))));
-        if (cin > now) cin = Math.max(1, now - 5);
-      }
-      const hasOut = !isToday || idx < 2; // two early clock-outs demoed today
-      const cout = hasOut
-        ? SHIFT_END[emp.shift] + Math.round(between(-25, 95))
-        : null;
-      out.push({
-        id: `a-${emp.id}-${key}`,
-        empId: emp.id,
-        date: key,
-        in: cin,
-        out: cout,
-        source: rnd() > 0.12 ? "qr" : pick(["manual", "supervisor"] as const),
-      });
-    });
+    for (const emp of EMPLOYEES) {
+      if (!emp.active) continue;
+      const r = Math.random();
+      if (r < 0.055) continue; // غياب
+      const baseStart = emp.shift === "morning" ? 360 : emp.shift === "evening" ? 840 : 1320;
+      const late = Math.random() < 0.16 ? 12 + Math.floor(Math.random() * 48) : Math.floor(Math.random() * 8);
+      const inMin = baseStart + late;
+      const ot = Math.random() < 0.28 ? 30 + Math.floor(Math.random() * 90) : 0;
+      const outMin = back === 0 ? null : inMin + 480 + 30 + ot;
+      recs.push({ id: `at-${seq++}`, empId: emp.id, date: key, in: inMin, out: outMin, method: Math.random() < 0.8 ? "qr" : "manual" });
+    }
   }
-  return out;
+  return recs;
 }
-export const ATTENDANCE: AttendanceRecord[] = buildAttendance();
+export const ATTENDANCE_SEED = genAttendance();
 
-// ─── Leaves & advances ──────────────────────────────────────────────────────
-const today = new Date();
-const dk = (n: number) => dateKey(addDays(today, n));
-export const LEAVES: LeaveRequest[] = [
-  { id: "lv1", empId: "e03", type: "sick", from: dk(-4), to: dk(-2), days: 3, reason: "Flu, doctor's note attached", status: "approved", decidedBy: "Layla Haddad" },
-  { id: "lv2", empId: "e07", type: "annual", from: dk(6), to: dk(9), days: 4, reason: "Family wedding in Alexandria", status: "pending" },
-  { id: "lv3", empId: "e05", type: "permission", from: dk(1), to: dk(1), days: 1, reason: "Bank & paperwork appointment", status: "pending" },
-  { id: "lv4", empId: "e09", type: "unpaid", from: dk(-9), to: dk(-8), days: 2, reason: "Personal travel — no paid balance left", status: "approved", decidedBy: "Layla Haddad" },
-  { id: "lv5", empId: "e10", type: "annual", from: dk(-15), to: dk(-13), days: 3, reason: "Annual leave balance", status: "approved", decidedBy: "Layla Haddad" },
-  { id: "lv6", empId: "e12", type: "sick", from: dk(-2), to: dk(-1), days: 2, reason: "Back strain", status: "rejected", decidedBy: "Layla Haddad" },
+// ─── الإجازات ───────────────────────────────────────────────────────────────
+const t0 = new Date();
+export const LEAVES_SEED: LeaveRequest[] = [
+  { id: "lv1", empId: "e5", type: "sick", from: dateKey(addDays(t0, 2)), to: dateKey(addDays(t0, 3)), reason: "إجازة مرضية — مراجعة طبية", status: "pending" },
+  { id: "lv2", empId: "e8", type: "permission", from: dateKey(addDays(t0, 1)), to: dateKey(addDays(t0, 1)), reason: "مراجعة جهة حكومية (٣ ساعات)", status: "pending" },
+  { id: "lv3", empId: "e6", type: "annual", from: dateKey(addDays(t0, -9)), to: dateKey(addDays(t0, -6)), reason: "إجازة سنوية عائلية", status: "approved" },
+  { id: "lv4", empId: "e9", type: "sick", from: dateKey(addDays(t0, -4)), to: dateKey(addDays(t0, -3)), reason: "وعكة صحية", status: "approved" },
+  { id: "lv5", empId: "e11", type: "unpaid", from: dateKey(addDays(t0, -16)), to: dateKey(addDays(t0, -14)), reason: "ظروف خاصة", status: "approved" },
+  { id: "lv6", empId: "e4", type: "annual", from: dateKey(addDays(t0, -20)), to: dateKey(addDays(t0, -19)), reason: "إجازة قصيرة", status: "rejected" },
 ];
 
-export const ADVANCES: Advance[] = [
-  { id: "ad1", empId: "e02", amount: 150, date: dk(-6), note: "School fees advance" },
-  { id: "ad2", empId: "e05", amount: 220, date: dk(-12), note: "Rent advance" },
-  { id: "ad3", empId: "e09", amount: 90, date: dk(-3), note: "Medical advance" },
-  { id: "ad4", empId: "e01", amount: 300, date: dk(-40), note: "Eid advance", settledMonth: "settled" },
+// ─── السلف ──────────────────────────────────────────────────────────────────
+export const ADVANCES_SEED: Advance[] = [
+  { id: "ad1", empId: "e5", amount: 400, date: dateKey(addDays(t0, -6)), note: "سلفة طارئة" },
+  { id: "ad2", empId: "e9", amount: 300, date: dateKey(addDays(t0, -12)), note: "سلفة مواصلات" },
+  { id: "ad3", empId: "e6", amount: 500, date: dateKey(addDays(t0, -40)), note: "سلفة إيجار", settledMonth: prevMonthKey(monthKeyOf(t0)) },
 ];
 
-// ─── Products ───────────────────────────────────────────────────────────────
-const packsFor = (boxUnits: number, boxPrice: number) => {
-  const carton = Math.round(boxPrice * 0.96 * 100) / 100;
-  const pallet = Math.round(boxPrice * 0.9 * 100) / 100;
-  return [
-    { tier: "box" as const, label: `Box · ${boxUnits} packs`, units: boxUnits, price: boxPrice },
-    { tier: "carton" as const, label: `Carton · ${boxUnits * 12} packs`, units: boxUnits * 12, price: carton },
-    { tier: "pallet" as const, label: `Pallet · ${boxUnits * 12 * 60} packs`, units: boxUnits * 12 * 60, price: pallet },
-  ];
-};
-const nutrition = (energy: number, sugar: number, fat: number) => [
-  { label: "Energy", value: `${energy} kcal` },
-  { label: "Protein", value: "6.1 g" },
-  { label: "Carbohydrates", value: "64 g" },
-  { label: "of which sugars", value: `${sugar} g` },
-  { label: "Total fat", value: `${fat} g` },
-  { label: "Fibre", value: "2.4 g" },
-  { label: "Sodium", value: "0.31 g" },
+// ─── المنتجات ───────────────────────────────────────────────────────────────
+const NUTR = (kcal: string, fat: string, sat: string, carb: string, sug: string, fib: string, pro: string, salt: string) => [
+  { label: "الطاقة", value: kcal }, { label: "الدهون", value: fat }, { label: "منها مشبعة", value: sat },
+  { label: "الكربوهيدرات", value: carb }, { label: "السكريات", value: sug }, { label: "الألياف", value: fib },
+  { label: "البروتين", value: pro }, { label: "الملح", value: salt },
 ];
 
 export const PRODUCTS: Product[] = [
   {
-    id: "p1", name: "Heritage Butter Rounds", arabicName: "بسكويت الزبدة", flavor: "Salted Butter", family: "Butter",
-    img: img("b10311c0-6756-4eaf-9661-5d8e1de2fbaf"), weight: "180 g",
-    ingredients: ["Wheat flour", "Butter 24%", "Sugar", "Whole milk powder", "Sea salt", "Natural vanilla"],
-    nutrition: nutrition(489, 21, 22), packs: packsFor(24, 1.15), moqCartons: 5, stock: 342, rating: 4.9, soldRank: 2, badge: "Best Seller",
+    id: "p1", name: "شورتبرد الزبدة الذهبي", latinName: "Golden Shortbread", flavor: "زبدة طبيعية", family: "زبدة", weight: "24 قطعة × 20غ",
+    img: "https://image.qwenlm.ai/generated-images/b10311c0-6756-4eaf-9661-5d8e1de2fbaf/_result.png",
+    ingredients: ["دقيق القمح", "زبدة طبيعية ٣٢٪", "سكر ناعم", "خلاصة الفانيليا", "ملح بحري"],
+    nutrition: NUTR("512 سعرة", "26غ", "16غ", "61غ", "20غ", "1.4غ", "5.2غ", "0.4غ"),
+    packs: [
+      { tier: "box", units: 24, price: 14, label: "علبة عرض — ٢٤ قطعة" },
+      { tier: "carton", units: 12, price: 12.5, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 11.2, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 5, stock: 640, rating: 4.9, badge: "الأكثر مبيعًا", soldRank: 1,
   },
   {
-    id: "p2", name: "Midnight Choco Chunk", arabicName: "كوكيز الشوكولاتة", flavor: "Dark Chocolate", family: "Chocolate",
-    img: img("f08db7d8-ab26-44ec-a816-97ecad2e7f56"), weight: "200 g",
-    ingredients: ["Wheat flour", "Dark chocolate chunks 22%", "Brown sugar", "Butter", "Cocoa powder", "Egg", "Baking soda"],
-    nutrition: nutrition(512, 27, 26), packs: packsFor(20, 1.35), moqCartons: 5, stock: 418, rating: 4.8, soldRank: 1, badge: "#1 Seller",
+    id: "p2", name: "كوكيز الشوكولاتة الفاخر", latinName: "Choco Chunk Cookies", flavor: "شوكولاتة داكنة", family: "شوكولاتة", weight: "18 قطعة × 25غ",
+    img: "https://image.qwenlm.ai/generated-images/f08db7d8-ab26-44ec-a816-97ecad2e7f56/_result.png",
+    ingredients: ["دقيق القمح", "رقائق شوكولاتة ٢٤٪", "سكر بني", "زبدة", "كاكاو", "بيض"],
+    nutrition: NUTR("489 سعرة", "23غ", "13غ", "64غ", "31غ", "2.1غ", "6غ", "0.5غ"),
+    packs: [
+      { tier: "box", units: 18, price: 16, label: "علبة عرض — ١٨ قطعة" },
+      { tier: "carton", units: 12, price: 14.5, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 13, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 5, stock: 420, rating: 4.8, soldRank: 2,
   },
   {
-    id: "p3", name: "Simsim Sesame Snaps", arabicName: "سمسمية", flavor: "Toasted Sesame", family: "Sesame",
-    img: img("ad6809d7-7a9b-400c-ad41-9af066c8b039"), weight: "150 g",
-    ingredients: ["Sesame seeds 58%", "Glucose syrup", "Sugar", "Butter", "Lemon juice"],
-    nutrition: nutrition(531, 24, 31), packs: packsFor(24, 1.05), moqCartons: 8, stock: 265, rating: 4.7, soldRank: 3,
+    id: "p3", name: "السمسمية المقرمشة", latinName: "Sesame Snaps", flavor: "سمسم محمّص", family: "سمسم", weight: "30 قطعة × 12غ",
+    img: "https://image.qwenlm.ai/generated-images/ad6809d7-7a9b-400c-ad41-9af066c8b039/_result.png",
+    ingredients: ["سمسم محمّص ٥٥٪", "سكر", "جلوكوز", "زيت نباتي", "ملح"],
+    nutrition: NUTR("540 سعرة", "31غ", "4.5غ", "52غ", "28غ", "3.8غ", "11غ", "0.2غ"),
+    packs: [
+      { tier: "box", units: 30, price: 10, label: "علبة عرض — ٣٠ قطعة" },
+      { tier: "carton", units: 12, price: 9, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 8, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 10, stock: 880, rating: 4.7, badge: "تراثي", soldRank: 3,
   },
   {
-    id: "p4", name: "Maamoul Date Bites", arabicName: "معمول التمر", flavor: "Ajwa Dates", family: "Dates",
-    img: img("d6519e5c-3db5-4123-9b49-610620551bbe"), weight: "250 g",
-    ingredients: ["Semolina", "Ajwa date paste 34%", "Butter", "Flour", "Orange blossom water", "Cardamom"],
-    nutrition: nutrition(468, 30, 18), packs: packsFor(18, 1.6), moqCartons: 6, stock: 198, rating: 4.9, soldRank: 4, badge: "Seasonal Star",
+    id: "p4", name: "معمول التمر الملكي", latinName: "Royal Date Maamoul", flavor: "عجوة تمر", family: "تمر", weight: "20 قطعة × 30غ",
+    img: "https://image.qwenlm.ai/generated-images/d6519e5c-3db5-4123-9b49-610620551bbe/_result.png",
+    ingredients: ["دقيق سميد", "عجوة تمر ٣٠٪", "زبدة", "سكر بودرة", "ماء زهر", "هيل"],
+    nutrition: NUTR("462 سعرة", "19غ", "11غ", "66غ", "33غ", "3غ", "4.8غ", "0.1غ"),
+    packs: [
+      { tier: "box", units: 20, price: 18, label: "علبة هدية — ٢٠ قطعة" },
+      { tier: "carton", units: 12, price: 16.5, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 15, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 5, stock: 300, rating: 4.9, badge: "موسمي", soldRank: 4,
   },
   {
-    id: "p5", name: "Oat & Honey Digestives", arabicName: "بسكويت الشوفان", flavor: "Oat & Honey", family: "Oat",
-    img: img("c7dbc7b6-dc36-4cf8-9ecc-53b92a2d5c78"), weight: "220 g",
-    ingredients: ["Wholegrain oats 41%", "Wholemeal flour", "Sunflower oil", "Wildflower honey 7%", "Malt extract", "Raising agents"],
-    nutrition: nutrition(471, 16, 20), packs: packsFor(22, 1.2), moqCartons: 5, stock: 301, rating: 4.6, soldRank: 5,
+    id: "p5", name: "بسكويت الشوفان بالعسل", latinName: "Oat & Honey Digestive", flavor: "شوفان وعسل", family: "شوفان", weight: "22 قطعة × 18غ",
+    img: "https://image.qwenlm.ai/generated-images/c7dbc7b6-dc36-4cf8-9ecc-53b92a2d5c78/_result.png",
+    ingredients: ["شوفان كامل ٤٠٪", "دقيق قمح كامل", "عسل طبيعي ٨٪", "سكر", "زيت نباتي"],
+    nutrition: NUTR("448 سعرة", "18غ", "6غ", "62غ", "19غ", "5.5غ", "7.4غ", "0.6غ"),
+    packs: [
+      { tier: "box", units: 22, price: 12, label: "علبة عرض — ٢٢ قطعة" },
+      { tier: "carton", units: 12, price: 11, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 9.8, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 5, stock: 510, rating: 4.6, badge: "صحي", soldRank: 5,
   },
   {
-    id: "p6", name: "Vanilla Wafer Sticks", arabicName: "ويڤر ڤانيليا", flavor: "Vanilla Cream", family: "Butter",
-    img: img("dbe8c237-56a0-4a63-aa92-9529b0f7c4ee"), weight: "120 g",
-    ingredients: ["Wheat flour", "Palm oil", "Sugar", "Whey powder", "Natural vanilla 1.2%", "Emulsifier (soy lecithin)"],
-    nutrition: nutrition(523, 25, 28), packs: packsFor(30, 0.95), moqCartons: 10, stock: 456, rating: 4.5, soldRank: 6,
+    id: "p6", name: "ويفر الفانيليا الهش", latinName: "Vanilla Wafer Rolls", flavor: "كريمة فانيليا", family: "فانيليا", weight: "26 قطعة × 10غ",
+    img: "https://image.qwenlm.ai/generated-images/dbe8c237-56a0-4a63-aa92-9529b0f7c4ee/_result.png",
+    ingredients: ["دقيق القمح", "سكر", "زيت نباتي", "مسحوق مصل الحليب", "فانيليا طبيعية"],
+    nutrition: NUTR("505 سعرة", "25غ", "12غ", "65غ", "30غ", "0.8غ", "4.5غ", "0.3غ"),
+    packs: [
+      { tier: "box", units: 26, price: 9, label: "علبة عرض — ٢٦ قطعة" },
+      { tier: "carton", units: 12, price: 8.2, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 7.4, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 10, stock: 96, rating: 4.4, soldRank: 7,
   },
   {
-    id: "p7", name: "Toasted Coconut Crackers", arabicName: "بسكويت جوز الهند", flavor: "Coconut", family: "Coconut",
-    img: img("804a5396-3e21-49a4-b574-0b5596bf53a5"), weight: "160 g",
-    ingredients: ["Wheat flour", "Desiccated coconut 19%", "Coconut oil", "Sugar", "Sea salt", "Yeast"],
-    nutrition: nutrition(498, 14, 24), packs: packsFor(24, 1.1), moqCartons: 6, stock: 88, rating: 4.4, soldRank: 7,
+    id: "p7", name: "مقرمشات جوز الهند", latinName: "Coconut Crisp", flavor: "جوز هند محمّص", family: "جوز هند", weight: "28 قطعة × 11غ",
+    img: "https://image.qwenlm.ai/generated-images/804a5396-3e21-49a4-b574-0b5596bf53a5/_result.png",
+    ingredients: ["دقيق القمح", "جوز هند مبشور ٢٢٪", "سكر", "زبدة", "بيض"],
+    nutrition: NUTR("497 سعرة", "24غ", "15غ", "63غ", "26غ", "2.6غ", "5.8غ", "0.4غ"),
+    packs: [
+      { tier: "box", units: 28, price: 11, label: "علبة عرض — ٢٨ قطعة" },
+      { tier: "carton", units: 12, price: 10, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 9, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 10, stock: 260, rating: 4.5, soldRank: 6,
   },
   {
-    id: "p8", name: "Lemon Shortbread Fingers", arabicName: "شورت بريد الليمون", flavor: "Lemon Zest", family: "Fruit",
-    img: img("b417e6ce-a99c-4e13-b319-4a71f052dc91"), weight: "175 g",
-    ingredients: ["Wheat flour", "Butter 26%", "Icing sugar", "Lemon zest 2%", "Citric acid", "Natural lemon oil"],
-    nutrition: nutrition(484, 22, 23), packs: packsFor(20, 1.25), moqCartons: 5, stock: 143, rating: 4.7, soldRank: 8,
+    id: "p8", name: "أصابع الليمون المنعشة", latinName: "Lemon Shortbread Fingers", flavor: "ليمون وجلّاز", family: "حمضيات", weight: "20 قطعة × 15غ",
+    img: "https://image.qwenlm.ai/generated-images/b417e6ce-a99c-4e13-b319-4a71f052dc91/_result.png",
+    ingredients: ["دقيق القمح", "زبدة", "سكر", "قشر ليمون طبيعي", "عصير ليمون مجفف"],
+    nutrition: NUTR("478 سعرة", "22غ", "13غ", "66غ", "27غ", "1.1غ", "4.9غ", "0.3غ"),
+    packs: [
+      { tier: "box", units: 20, price: 13, label: "علبة عرض — ٢٠ قطعة" },
+      { tier: "carton", units: 12, price: 11.8, label: "كرتونة — ١٢ علبة" },
+      { tier: "pallet", units: 60, price: 10.5, label: "طبالية — ٦٠ كرتونة" },
+    ],
+    moqCartons: 5, stock: 180, rating: 4.6, badge: "جديد", soldRank: 8,
   },
 ];
 
-// ─── Inventory ──────────────────────────────────────────────────────────────
+// ─── المواد الخام ───────────────────────────────────────────────────────────
 export const RAW_MATERIALS: RawMaterial[] = [
-  { id: "rm1", name: "Premium Wheat Flour", unit: "kg", stock: 18400, reorderAt: 8000, costPerUnit: 0.42, supplier: "Nile Mills Co.", lastDelivery: dk(-4) },
-  { id: "rm2", name: "Refined Sugar", unit: "kg", stock: 6200, reorderAt: 4000, costPerUnit: 0.51, supplier: "Delta Sugar", lastDelivery: dk(-9) },
-  { id: "rm3", name: "Butter (82% fat)", unit: "kg", stock: 2950, reorderAt: 3200, costPerUnit: 4.1, supplier: "Green Pastures Dairy", lastDelivery: dk(-6) },
-  { id: "rm4", name: "Cocoa Powder 22%", unit: "kg", stock: 1180, reorderAt: 600, costPerUnit: 3.4, supplier: "CacaoTrade Intl.", lastDelivery: dk(-14) },
-  { id: "rm5", name: "Sesame Seeds", unit: "kg", stock: 720, reorderAt: 800, costPerUnit: 2.2, supplier: "Simsim Export Co.", lastDelivery: dk(-11) },
-  { id: "rm6", name: "Ajwa Date Paste", unit: "kg", stock: 1540, reorderAt: 700, costPerUnit: 2.9, supplier: "Qasr Dates", lastDelivery: dk(-7) },
-  { id: "rm7", name: "Rolled Oats", unit: "kg", stock: 2100, reorderAt: 900, costPerUnit: 0.88, supplier: "Highland Grains", lastDelivery: dk(-16) },
-  { id: "rm8", name: "Flow-pack Film Roll", unit: "roll", stock: 46, reorderAt: 60, costPerUnit: 38, supplier: "PackRight", lastDelivery: dk(-13) },
+  { id: "rm1", name: "دقيق القمح", unit: "كيس ٥٠ كغ", qty: 140, reorderPoint: 80, capacity: 400, supplier: "مطاحن الراجحي" },
+  { id: "rm2", name: "السكر الناعم", unit: "كيس ٥٠ كغ", qty: 62, reorderPoint: 40, capacity: 200, supplier: "شركة السكر المتحدة" },
+  { id: "rm3", name: "الزبدة الطبيعية", unit: "كرتون ٢٠ كغ", qty: 18, reorderPoint: 25, capacity: 120, supplier: "ألبان الصافي" },
+  { id: "rm4", name: "رقائق الشوكولاتة", unit: "كرتون ١٥ كغ", qty: 34, reorderPoint: 20, capacity: 100, supplier: "كاليبو" },
+  { id: "rm5", name: "السمسم المحمّص", unit: "كيس ٢٥ كغ", qty: 26, reorderPoint: 15, capacity: 90, supplier: "مكسرات الرياض" },
+  { id: "rm6", name: "عجوة التمر", unit: "كرتون ١٠ كغ", qty: 44, reorderPoint: 30, capacity: 150, supplier: "تمور القصيم" },
+  { id: "rm7", name: "الشوفان الكامل", unit: "كيس ٢٥ كغ", qty: 21, reorderPoint: 18, capacity: 80, supplier: "الحبوب الوطنية" },
+  { id: "rm8", name: "عبوات كرتونية", unit: "حزمة ١٠٠", qty: 310, reorderPoint: 150, capacity: 900, supplier: "مصنع التغليف الحديث" },
 ];
 
+// ─── دفعات الإنتاج (تواريخ الصلاحية) ────────────────────────────────────────
 export const BATCHES: Batch[] = [
-  { id: "b1", productId: "p2", batchNo: "LOT-2481-A", qty: 220, producedAt: dk(-2), shelfLifeDays: 270, line: "Line A" },
-  { id: "b2", productId: "p1", batchNo: "LOT-2479-B", qty: 180, producedAt: dk(-3), shelfLifeDays: 240, line: "Line B" },
-  { id: "b3", productId: "p4", batchNo: "LOT-2476-A", qty: 96, producedAt: dk(-6), shelfLifeDays: 120, line: "Line A" },
-  { id: "b4", productId: "p3", batchNo: "LOT-2470-C", qty: 140, producedAt: dk(-12), shelfLifeDays: 21, line: "Line C" },
-  { id: "b5", productId: "p5", batchNo: "LOT-2468-B", qty: 120, producedAt: dk(-15), shelfLifeDays: 180, line: "Line B" },
-  { id: "b6", productId: "p6", batchNo: "LOT-2462-A", qty: 260, producedAt: dk(-20), shelfLifeDays: 300, line: "Line A" },
-  { id: "b7", productId: "p7", batchNo: "LOT-2455-C", qty: 64, producedAt: dk(-32), shelfLifeDays: 36, line: "Line C" },
-  { id: "b8", productId: "p8", batchNo: "LOT-2451-B", qty: 88, producedAt: dk(-26), shelfLifeDays: 30, line: "Line B" },
+  { id: "b1", lot: "LOT-0241", productId: "p1", producedAt: dateKey(addDays(t0, -12)), expiryDays: 180, qty: 220 },
+  { id: "b2", lot: "LOT-0242", productId: "p2", producedAt: dateKey(addDays(t0, -8)), expiryDays: 150, qty: 160 },
+  { id: "b3", lot: "LOT-0238", productId: "p3", producedAt: dateKey(addDays(t0, -150)), expiryDays: 160, qty: 340 },
+  { id: "b4", lot: "LOT-0240", productId: "p4", producedAt: dateKey(addDays(t0, -20)), expiryDays: 90, qty: 120 },
+  { id: "b5", lot: "LOT-0243", productId: "p5", producedAt: dateKey(addDays(t0, -5)), expiryDays: 120, qty: 190 },
+  { id: "b6", lot: "LOT-0236", productId: "p6", producedAt: dateKey(addDays(t0, -170)), expiryDays: 180, qty: 80 },
+  { id: "b7", lot: "LOT-0244", productId: "p7", producedAt: dateKey(addDays(t0, -3)), expiryDays: 150, qty: 110 },
+  { id: "b8", lot: "LOT-0239", productId: "p8", producedAt: dateKey(addDays(t0, -35)), expiryDays: 45, qty: 90 },
 ];
 
-// ─── Orders ─────────────────────────────────────────────────────────────────
-function mkOrder(
-  n: number, customer: string, kind: "B2B" | "B2C", daysAgo: number, status: 0 | 1 | 2 | 3,
-  lines: [string, "box" | "carton" | "pallet", number][], payment: Order["payment"]
-): Order {
-  const placed = new Date(); placed.setDate(placed.getDate() - daysAgo); placed.setHours(9 + n, 12, 0, 0);
-  const items = lines.map(([pid, tier, qty]) => {
-    const p = PRODUCTS.find((x) => x.id === pid)!;
-    const pack = p.packs.find((x) => x.tier === tier)!;
-    return {
-      productId: pid, name: p.name, tier, tierLabel: pack.label, qty,
-      unitPrice: pack.price, lineTotal: Math.round(pack.price * pack.units * qty * 100) / 100,
-    };
-  });
-  const subtotal = Math.round(items.reduce((s, i) => s + i.lineTotal, 0) * 100) / 100;
-  const volumeDiscount = kind === "B2B" ? Math.round(subtotal * 0.09 * 100) / 100 : 0;
-  const deliveryFee = subtotal - volumeDiscount > 400 ? 0 : 14;
-  const total = Math.round((subtotal - volumeDiscount + deliveryFee) * 100) / 100;
-  const timeline: Order["timeline"] = [];
-  const stages: (0 | 1 | 2 | 3)[] = [0, 1, 2, 3];
-  stages.forEach((s, i) => {
-    if (s <= status) {
-      const t = new Date(placed); t.setHours(t.getHours() + i * 14 + 2);
-      if (s === 3 && status === 3) t.setDate(t.getDate() + 1);
-      timeline.push({ stage: s, at: t.toISOString() });
-    }
-  });
-  const dd = new Date(placed); dd.setDate(dd.getDate() + 3);
-  return {
-    id: `o${n}`, ref: `OW-${2400 + n}`, customer, kind, placedAt: placed.toISOString(),
-    items, subtotal, volumeDiscount, deliveryFee, total, status, timeline, payment,
-    deliveryDate: dateKey(dd), deliveryWindow: "09:00 – 13:00",
-    address: kind === "B2B" ? "Central warehouse, 6th of October City" : "Villa 22, Palm Grove district",
-  };
-}
-
-export const ORDERS: Order[] = [
-  mkOrder(18, "Al-Noor Markets Co.", "B2B", 1, 0, [["p2", "pallet", 1], ["p1", "carton", 40]], "bank"),
-  mkOrder(17, "Carrefour — Nasr City", "B2B", 2, 1, [["p4", "carton", 30], ["p3", "carton", 24]], "bank"),
-  mkOrder(16, "Mariam Adel", "B2C", 3, 1, [["p1", "box", 6], ["p8", "box", 4]], "card"),
-  mkOrder(15, "Sunrise Cafés Group", "B2B", 4, 2, [["p6", "carton", 50], ["p5", "carton", 18]], "cod"),
-  mkOrder(14, "Huda Sami", "B2C", 5, 2, [["p2", "box", 8]], "cod"),
-  mkOrder(13, "Lulu Hypermarket", "B2B", 7, 3, [["p2", "pallet", 2], ["p7", "carton", 30]], "bank"),
-  mkOrder(12, "Omar Khalifa", "B2C", 9, 3, [["p4", "box", 10], ["p1", "box", 5]], "card"),
+// ─── الطلبات ────────────────────────────────────────────────────────────────
+export const ORDERS_SEED: Order[] = [
+  {
+    id: "OW-2419", customer: "أسواق التميمي", customerPhone: "966541111111",
+    lines: [{ productId: "p1", tier: "carton", qty: 40 }, { productId: "p4", tier: "carton", qty: 12 }],
+    subtotal: 6932, discount: 489.6, deliveryFee: 0, total: 6442.4, status: "baking",
+    placedAt: dateKey(addDays(t0, -1)), deliverOn: dateKey(addDays(t0, 2)), window: "08:00 – 12:00", payment: "transfer",
+  },
+  {
+    id: "OW-2418", customer: "مؤسسة النخبة للتوزيع", customerPhone: "966542222222",
+    lines: [{ productId: "p3", tier: "pallet", qty: 1 }, { productId: "p7", tier: "carton", qty: 24 }],
+    subtotal: 6180, discount: 522, deliveryFee: 0, total: 5658, status: "pending",
+    placedAt: todayKey(), deliverOn: dateKey(addDays(t0, 3)), window: "12:00 – 16:00", payment: "cod",
+  },
+  {
+    id: "OW-2417", customer: "بقالة الخير", customerPhone: "966543333333",
+    lines: [{ productId: "p2", tier: "carton", qty: 8 }],
+    subtotal: 928, discount: 0, deliveryFee: 45, total: 973, status: "shipped",
+    placedAt: dateKey(addDays(t0, -2)), deliverOn: dateKey(addDays(t0, 1)), window: "16:00 – 20:00", payment: "cod",
+  },
+  {
+    id: "OW-2416", customer: "فندق القصر الذهبي", customerPhone: "966544444444",
+    lines: [{ productId: "p4", tier: "carton", qty: 15 }, { productId: "p8", tier: "carton", qty: 10 }],
+    subtotal: 2042, discount: 102.1, deliveryFee: 0, total: 1939.9, status: "delivered",
+    placedAt: dateKey(addDays(t0, -5)), deliverOn: dateKey(addDays(t0, -3)), window: "08:00 – 12:00", payment: "transfer",
+  },
+  {
+    id: "OW-2415", customer: "أسواق العائلة", customerPhone: "966545555555",
+    lines: [{ productId: "p5", tier: "carton", qty: 22 }, { productId: "p6", tier: "carton", qty: 14 }],
+    subtotal: 1656.4, discount: 82.8, deliveryFee: 0, total: 1573.6, status: "delivered",
+    placedAt: dateKey(addDays(t0, -7)), deliverOn: dateKey(addDays(t0, -5)), window: "12:00 – 16:00", payment: "gateway",
+  },
 ];
 
-// ─── Audit trail (immutable) ───────────────────────────────────────────────
+// ─── سجل التدقيق ────────────────────────────────────────────────────────────
 export const AUDIT_SEED: AuditEntry[] = [
-  { id: "au1", at: new Date(Date.now() - 1000 * 60 * 42).toISOString(), actor: "Layla Haddad", role: "hr", action: "Payroll advance issued", target: "Dalia Mostafa · $90", detail: "Medical advance, to be settled in current payroll run", severity: "warning" },
-  { id: "au2", at: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(), actor: "Omar Suleiman", role: "production", action: "Stock delivery received", target: "Premium Wheat Flour +6,000 kg", detail: "GRN-1187 · Nile Mills Co. · silo 2", severity: "info" },
-  { id: "au3", at: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(), actor: "Samir Qassab", role: "super_admin", action: "Salary adjustment", target: "Karim Aziz · +$60/mo", detail: "Night-shift retention adjustment, effective this month", severity: "critical" },
-  { id: "au4", at: new Date(Date.now() - 1000 * 60 * 60 * 9).toISOString(), actor: "Nadia Rahman", role: "sales", action: "Order stage advanced", target: "OW-2415 → Shipped", detail: "Sunrise Cafés Group · 68 cartons · carrier TransFood", severity: "info" },
-  { id: "au5", at: new Date(Date.now() - 1000 * 60 * 60 * 22).toISOString(), actor: "Layla Haddad", role: "hr", action: "Attendance override", target: "Tariq Bishara · " + dk(-2), detail: "Missed gate punch corrected from CCTV log (06:02)", severity: "warning" },
-  { id: "au6", at: new Date(Date.now() - 1000 * 60 * 60 * 28).toISOString(), actor: "Layla Haddad", role: "hr", action: "Leave approved", target: "Yusuf Karim · Sick × 3 days", detail: "Doctor's note verified (REF-MD-5521)", severity: "info" },
-  { id: "au7", at: new Date(Date.now() - 1000 * 60 * 60 * 34).toISOString(), actor: "Omar Suleiman", role: "production", action: "Batch quarantine lifted", target: "LOT-2470-C Sesame Snaps", detail: "QC moisture re-test passed 3.1% (spec ≤ 4%)", severity: "info" },
-  { id: "au8", at: new Date(Date.now() - 1000 * 60 * 60 * 51).toISOString(), actor: "System", role: "super_admin", action: "Nightly payroll run", target: "Draft preview generated", detail: "12 employees · 0 anomalies · awaiting approval", severity: "info" },
+  { id: "au1", at: dateKey(addDays(t0, -1)) + " 09:14", actor: "منيرة السالم", role: "hr", action: "اعتماد مسير رواتب", detail: `اعتماد مسير ${prevMonthKey(monthKeyOf(t0))} وإصدار ١١ قسيمة راتب` },
+  { id: "au2", at: dateKey(addDays(t0, -1)) + " 07:02", actor: "سعد الحربي", role: "production", action: "استلام مواد خام", detail: "استلام ٦٠ كيس دقيق قمح من مطاحن الراجحي" },
+  { id: "au3", at: dateKey(addDays(t0, -1)) + " 11:40", actor: "يزيد العتيبي", role: "sales", action: "تحديث حالة طلب", detail: "OW-2417 ← تم الشحن إلى بقالة الخير" },
+  { id: "au4", at: dateKey(addDays(t0, -2)) + " 13:25", actor: "عبدالله الراشد", role: "super", action: "تعديل راتب أساسي", detail: "تعديل راتب نورة القحطاني إلى 3,800 ر.س (مراجعة أداء)" },
+  { id: "au5", at: dateKey(addDays(t0, -2)) + " 08:51", actor: "منيرة السالم", role: "hr", action: "تسجيل سلفة", detail: "سلفة ٤٠٠ ر.س لنورة القحطاني — ستُخصم من مسير الشهر" },
+  { id: "au6", at: dateKey(addDays(t0, -3)) + " 16:10", actor: "أحمد الغامدي", role: "customer", action: "إدخال حضور يدوي", detail: "إدخال يدوي بواسطة المشرف ليوسف الزهراني (تعطل قارئ البadge)" },
+  { id: "au7", at: dateKey(addDays(t0, -4)) + " 10:33", actor: "سعد الحربي", role: "production", action: "تنبيه صلاحية", detail: "LOT-0239 (أصابع الليمون) يدخل نافذة التنبيه قبل الانتهاء" },
+  { id: "au8", at: dateKey(addDays(t0, -5)) + " 12:18", actor: "عبدالله الراشد", role: "super", action: "إنشاء طلب جملة", detail: "OW-2416 لفندق القصر الذهبي — ٢٥ كرتونة، خصم ٥٪" },
 ];
 
-// ─── Sales series (84 days) for analytics ──────────────────────────────────
-export interface SalesPoint { day: string; label: string; revenue: number; units: number }
-export function buildSalesSeries(): SalesPoint[] {
-  const r = mulberry32(777);
-  const out: SalesPoint[] = [];
-  for (let back = 83; back >= 0; back--) {
-    const d = addDays(new Date(), -back);
-    const weekly = d.getDay() === 5 || d.getDay() === 6 ? 1.35 : d.getDay() === 0 ? 0.55 : 1;
-    const trend = (83 - back) * 26;
-    const noise = (r() - 0.5) * 1400;
-    const revenue = Math.round(5400 * weekly + trend + noise);
-    out.push({
-      day: dateKey(d),
-      label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      revenue,
-      units: Math.round(revenue / 8.6),
-    });
-  }
-  return out;
-}
+// ─── سلسلة الإيرادات (١٢ شهرًا) ──────────────────────────────────────────────
+export const REVENUE_SERIES = [
+  { month: 3, revenue: 412, payroll: 96 }, { month: 4, revenue: 388, payroll: 96 },
+  { month: 5, revenue: 455, payroll: 98 }, { month: 6, revenue: 512, payroll: 99 },
+  { month: 7, revenue: 489, payroll: 101 }, { month: 8, revenue: 534, payroll: 102 },
+  { month: 9, revenue: 571, payroll: 103 }, { month: 10, revenue: 602, payroll: 104 },
+  { month: 11, revenue: 648, payroll: 106 }, { month: 12, revenue: 719, payroll: 108 },
+  { month: 13, revenue: 692, payroll: 108 }, { month: 14, revenue: 661, payroll: 109 },
+].map((r) => ({ ...r, production: Math.round(r.revenue * 0.82) }));
 
-export const BEST_SELLERS = [...PRODUCTS].sort((a, b) => a.soldRank - b.soldRank).slice(0, 5);
-export const todayStr = todayKey();
+export const BESTSELLERS = [
+  { name: "شورتبرد الزبدة", sold: 1240 },
+  { name: "كوكيز الشوكولاتة", sold: 986 },
+  { name: "السمسمية", sold: 872 },
+  { name: "معمول التمر", sold: 640 },
+  { name: "شوفان بالعسل", sold: 512 },
+];

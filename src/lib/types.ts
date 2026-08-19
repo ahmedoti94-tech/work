@@ -1,40 +1,36 @@
-// ─── Ovenwright Biscuit Works · Domain Types ────────────────────────────────
-
-export type Role = "super_admin" | "hr" | "production" | "sales" | "customer";
+export type Role = "super" | "hr" | "production" | "sales" | "customer";
 
 export interface User {
   id: string;
   name: string;
   role: Role;
+  empId?: string;
   title: string;
-  org?: string;
 }
-
-export type ShiftKey = "morning" | "evening" | "night";
 
 export interface Employee {
   id: string;
   name: string;
-  code: string; // badge code e.g. OW-0114
   title: string;
-  dept: "Production" | "Packaging" | "Quality" | "Warehouse" | "Maintenance" | "Administration";
+  dept: string;
   shift: ShiftKey;
-  baseSalary: number; // monthly, USD
+  baseSalary: number;
   joinDate: string;
-  hue: number; // avatar hue
   active: boolean;
+  pin: string;
+  phone: string;
 }
 
-export type PunchSource = "qr" | "manual" | "supervisor";
+export type ShiftKey = "morning" | "evening" | "night";
 
 export interface AttendanceRecord {
   id: string;
   empId: string;
-  date: string; // YYYY-MM-DD
-  in: number | null; // minutes since midnight
+  date: string;
+  in: number | null;
   out: number | null;
-  source: PunchSource;
-  note?: string;
+  method: "qr" | "manual";
+  bySupervisor?: boolean;
 }
 
 export type LeaveType = "sick" | "annual" | "unpaid" | "permission";
@@ -46,10 +42,8 @@ export interface LeaveRequest {
   type: LeaveType;
   from: string;
   to: string;
-  days: number;
   reason: string;
   status: LeaveStatus;
-  decidedBy?: string;
 }
 
 export interface Advance {
@@ -58,113 +52,14 @@ export interface Advance {
   amount: number;
   date: string;
   note: string;
-  settledMonth?: string; // month key it was deducted in
-}
-
-export type PackTier = "box" | "carton" | "pallet";
-
-export interface PackOption {
-  tier: PackTier;
-  label: string; // "24 × 180g packs"
-  units: number;
-  price: number; // per pack unit
-}
-
-export interface Product {
-  id: string;
-  name: string;
-  arabicName: string;
-  flavor: string;
-  family: "Chocolate" | "Sesame" | "Dates" | "Butter" | "Oat" | "Fruit" | "Coconut";
-  img: string;
-  weight: string;
-  ingredients: string[];
-  nutrition: { label: string; value: string }[];
-  packs: PackOption[];
-  moqCartons: number; // minimum order quantity in cartons
-  stock: number; // cartons on hand
-  rating: number;
-  soldRank: number; // 1 = best seller
-  badge?: string;
-}
-
-export interface CartLine {
-  productId: string;
-  tier: PackTier;
-  qty: number;
-}
-
-export type OrderStatus = 0 | 1 | 2 | 3; // Pending → Baking/Packaging → Shipped → Delivered
-export const ORDER_STAGES = ["Pending", "Baking & Packaging", "Shipped", "Delivered"] as const;
-
-export interface OrderItem {
-  productId: string;
-  name: string;
-  tier: PackTier;
-  tierLabel: string;
-  qty: number;
-  unitPrice: number;
-  lineTotal: number;
-}
-
-export interface Order {
-  id: string;
-  ref: string;
-  customer: string;
-  kind: "B2B" | "B2C";
-  placedAt: string; // ISO
-  items: OrderItem[];
-  subtotal: number;
-  volumeDiscount: number;
-  deliveryFee: number;
-  total: number;
-  status: OrderStatus;
-  timeline: { stage: OrderStatus; at: string }[];
-  payment: "cod" | "bank" | "card";
-  deliveryDate: string;
-  deliveryWindow: string;
-  address: string;
-}
-
-export interface RawMaterial {
-  id: string;
-  name: string;
-  unit: string; // kg, L, roll
-  stock: number;
-  reorderAt: number;
-  costPerUnit: number;
-  supplier: string;
-  lastDelivery: string;
-}
-
-export interface Batch {
-  id: string;
-  productId: string;
-  batchNo: string;
-  qty: number; // cartons
-  producedAt: string;
-  shelfLifeDays: number;
-  line: "Line A" | "Line B" | "Line C";
-}
-
-export type Severity = "info" | "warning" | "critical";
-
-export interface AuditEntry {
-  id: string;
-  at: string; // ISO
-  actor: string;
-  role: Role;
-  action: string;
-  target: string;
-  detail: string;
-  severity: Severity;
+  settledMonth?: string;
 }
 
 export interface PayrollRow {
   label: string;
   value: number;
-  kind: "earn" | "deduct" | "info";
-  sub?: string;
+  kind: "earn" | "deduct";
+  sub: string;
 }
 
 export interface PayrollResult {
@@ -188,12 +83,98 @@ export interface PayrollResult {
   rows: PayrollRow[];
 }
 
-export type ViewKey =
+export interface Pack {
+  tier: PackTier;
+  units: number;
+  price: number;
+  label: string;
+}
+export type PackTier = "box" | "carton" | "pallet";
+
+export interface Product {
+  id: string;
+  name: string;
+  latinName: string;
+  flavor: string;
+  family: string;
+  weight: string;
+  img: string;
+  ingredients: string[];
+  nutrition: { label: string; value: string }[];
+  packs: Pack[];
+  moqCartons: number;
+  stock: number;
+  rating: number;
+  badge?: string;
+  soldRank: number;
+}
+
+export interface CartLine {
+  productId: string;
+  tier: PackTier;
+  qty: number;
+}
+
+export type OrderStatus = "pending" | "baking" | "shipped" | "delivered";
+export type PaymentMethod = "cod" | "transfer" | "gateway";
+
+export interface Order {
+  id: string;
+  customer: string;
+  customerPhone: string;
+  lines: CartLine[];
+  subtotal: number;
+  discount: number;
+  deliveryFee: number;
+  total: number;
+  status: OrderStatus;
+  placedAt: string;
+  deliverOn: string;
+  window: string;
+  payment: PaymentMethod;
+}
+
+export interface RawMaterial {
+  id: string;
+  name: string;
+  unit: string;
+  qty: number;
+  reorderPoint: number;
+  capacity: number;
+  supplier: string;
+}
+
+export interface Batch {
+  id: string;
+  lot: string;
+  productId: string;
+  producedAt: string;
+  expiryDays: number;
+  qty: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: string;
+  role: Role;
+  action: string;
+  detail: string;
+}
+
+export interface OfflinePunch {
+  id: string;
+  empId: string;
+  type: "in" | "out";
+  at: string;
+}
+
+export type View =
   | "dashboard"
-  | "market"
-  | "orders"
   | "attendance"
   | "payroll"
   | "leaves"
+  | "marketplace"
+  | "orders"
   | "inventory"
   | "system";

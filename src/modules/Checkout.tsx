@@ -1,269 +1,246 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useStore } from "../lib/store";
-import type { Order } from "../lib/types";
-import { addDays, dateKey, fmtMoney, fmtMoney0 } from "../lib/payroll";
-import { Badge, Btn, Field, Icon, inputCls, StageSteps } from "../components/ui";
+import { fmtDateShort, fmtMoney, waLink } from "../lib/payroll";
+import { PAY_AR, STATUS_AR, cartSummary, deliveryMinDate, useStore } from "../lib/store";
+import type { PaymentMethod } from "../lib/types";
+import { Badge, Btn, Field, Icon, Modal, inputCls } from "../components/ui";
 
-const WINDOWS = ["09:00 – 13:00", "13:00 – 17:00", "17:00 – 21:00"];
-const STEPS = ["Review", "Delivery", "Payment"];
+const STEPS = ["مراجعة السلة", "التوصيل", "الدفع والتأكيد"];
 
 export default function Checkout() {
   const {
-    cartOpen, setCartOpen, checkoutOpen, setCheckoutOpen, cartSummary, setCartQty,
-    removeCartLine, placeOrder, user,
+    cart, cartOpen, setCartOpen, checkoutOpen, setCheckoutOpen, products,
+    setLineQty, removeLine, placeOrder, user, toast, setView,
   } = useStore();
   const [step, setStep] = useState(0);
-  const [address, setAddress] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState(dateKey(addDays(new Date(), 2)));
-  const [window_, setWindow] = useState(WINDOWS[0]);
-  const [payment, setPayment] = useState<Order["payment"]>("cod");
-  const [placed, setPlaced] = useState<Order | null>(null);
-  const cart = useStore((s) => s.cart);
-  const sum = useMemo(() => cartSummary(), [cartSummary, cartOpen, checkoutOpen, cart]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [customer, setCustomer] = useState(user.role === "customer" ? user.name : "");
+  const [phone, setPhone] = useState("");
+  const [date, setDate] = useState(deliveryMinDate());
+  const [window_, setWindow_] = useState("08:00 – 12:00");
+  const [payment, setPayment] = useState<PaymentMethod>("cod");
+  const [placedId, setPlacedId] = useState<string | null>(null);
 
-  const openCheckout = () => { setCartOpen(false); setStep(0); setPlaced(null); setCheckoutOpen(true); };
-  const closeAll = () => { setCheckoutOpen(false); setPlaced(null); };
-  const tomorrow = dateKey(addDays(new Date(), 1));
-  const addressOk = address.trim().length > 6 && !!deliveryDate;
+  const sum = useMemo(() => cartSummary(cart, products), [cart, products]);
+
+  const openCheckout = () => { setStep(0); setCheckoutOpen(true); setCartOpen(false); };
+  const reset = () => { setCheckoutOpen(false); setPlacedId(null); setStep(0); };
 
   const confirm = () => {
-    const o = placeOrder({ payment, deliveryDate, deliveryWindow: window_, address: address.trim() || "On file — " + user.name });
-    if (o) { setPlaced(o); }
+    const order = placeOrder(customer.trim() || user.name, phone || "966500000000", date, window_, payment);
+    setPlacedId(order.id);
+    setStep(3);
+  };
+
+  const sendOrderWhatsApp = () => {
+    if (!placedId) return;
+    const order = useStore.getState().orders.find((o) => o.id === placedId);
+    if (!order) return;
+    const text =
+      `فاتورة طلب ${order.id} — مصنع أوفنرايت\n\nالعميل: ${order.customer}\n` +
+      order.lines.map((l) => {
+        const p = products.find((x) => x.id === l.productId)!;
+        return `• ${p.name} × ${l.qty} (${l.tier === "box" ? "علب" : l.tier === "carton" ? "كراتين" : "طبالي"})`;
+      }).join("\n") +
+      `\n\nالإجمالي: ${fmtMoney(order.subtotal, 0)}\nخصم الكميات: −${fmtMoney(order.discount, 0)}\nالتوصيل: ${order.deliveryFee === 0 ? "مجاني" : fmtMoney(order.deliveryFee, 0)}\nالصافي: ${fmtMoney(order.total, 0)}\nالدفع: ${PAY_AR[order.payment]}\nالتوصيل: ${fmtDateShort(order.deliverOn)} (${order.window})\n\nشكرًا لثقتكم`;
+    window.open(waLink(order.customerPhone, text), "_blank");
+    toast("جارٍ فتح واتساب لإرسال الفاتورة وتحديث الحالة للعميل", "sage");
   };
 
   return (
     <>
-      {/* ── Cart drawer ── */}
+      {/* ── سلة الطلب ── */}
       <AnimatePresence>
         {cartOpen && (
-          <motion.div className="fixed inset-0 z-[60]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-sunken/70" onClick={() => setCartOpen(false)} />
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] bg-sunken/60 backdrop-blur-[2px]" onClick={() => setCartOpen(false)} />
             <motion.aside
-              initial={{ x: 420 }} animate={{ x: 0 }} exit={{ x: 420 }}
-              transition={{ type: "spring", stiffness: 380, damping: 36 }}
-              className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-line bg-surface shadow-lift"
+              initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 32, stiffness: 300 }}
+              className="fixed inset-y-0 start-0 z-[61] flex w-full max-w-md flex-col border-e border-line bg-surface shadow-lift"
             >
               <div className="flex items-center justify-between border-b border-line px-5 py-4">
-                <div>
-                  <h3 className="font-display text-lg font-extrabold">Order crate</h3>
-                  <p className="text-[11px] text-mute">{sum.lines.length} line(s) · {sum.count} units</p>
-                </div>
-                <button onClick={() => setCartOpen(false)} className="btn-press rounded-lg p-1.5 text-mute hover:bg-raise hover:text-ink"><Icon name="x" size={18} /></button>
+                <h3 className="flex items-center gap-2 font-display text-[16px] font-bold">
+                  <Icon name="cart" size={18} className="text-brand" /> سلة طلب الجملة
+                </h3>
+                <button onClick={() => setCartOpen(false)} className="btn-press rounded-lg p-1.5 text-mute hover:bg-raise" aria-label="إغلاق">
+                  <Icon name="x" size={17} />
+                </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-5 py-4">
-                {sum.lines.length === 0 ? (
-                  <div className="flex h-full flex-col items-center justify-center text-center">
-                    <Icon name="cart" size={34} className="text-line" />
-                    <p className="mt-3 text-[13.5px] font-bold">Your crate is empty</p>
-                    <p className="mt-1 max-w-[240px] text-[12px] text-mute">Browse the bake house and stack a few cartons — volume tiers kick in at 10.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {sum.lines.map((l) => (
-                      <motion.div key={l.product.id + l.tier} layout className="flex gap-3 rounded-xl border border-line bg-raise p-2.5">
-                        <img src={l.product.img} alt={l.product.name} className="h-16 w-16 rounded-lg object-cover" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="truncate text-[13px] font-bold">{l.product.name}</p>
-                            <button onClick={() => removeCartLine(l.product.id, l.tier)} className="btn-press text-mute hover:text-berry"><Icon name="x" size={14} /></button>
-                          </div>
-                          <p className="text-[11px] capitalize text-mute">{l.tier} · {fmtMoney(l.unitPrice)}/pack · {Math.round(l.cartons * 10) / 10} ctn</p>
-                          <div className="mt-1.5 flex items-center justify-between">
-                            <div className="flex items-center rounded-md border border-linestrong bg-surface">
-                              <button className="btn-press p-1.5 text-mute hover:text-brand" onClick={() => setCartQty(l.product.id, l.tier, l.qty - 1)}><Icon name="minus" size={13} /></button>
-                              <span className="num w-8 text-center text-[12.5px] font-bold">{l.qty}</span>
-                              <button className="btn-press p-1.5 text-mute hover:text-brand" onClick={() => setCartQty(l.product.id, l.tier, l.qty + 1)}><Icon name="plus" size={13} /></button>
-                            </div>
-                            <p className="num text-[13px] font-extrabold">{fmtMoney(l.afterDiscount, 0)}
-                              {l.discount > 0 && <span className="ml-1.5 text-[10.5px] font-bold text-sage">−{fmtMoney0(l.discount)}</span>}
-                            </p>
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))}
+              <div className="flex-1 overflow-y-auto p-4">
+                {sum.lines.length === 0 && (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                    <Icon name="shop" size={40} className="text-line" />
+                    <p className="text-[13.5px] font-bold">سلتك فارغة</p>
+                    <p className="text-[12px] text-mute">تصفّح الكتالوج وأضف منتجات — الخصومات تُحسب تلقائيًا</p>
+                    <Btn variant="outline" onClick={() => { setCartOpen(false); setView("marketplace"); }}>فتح الكتالوج</Btn>
                   </div>
                 )}
+                <div className="space-y-3">
+                  {sum.lines.map(({ line, product, pack, cartons, rate, net }) => (
+                    <div key={`${line.productId}-${line.tier}`} className="flex gap-3 rounded-xl border border-line bg-raise p-3">
+                      <img src={product.img} alt={product.name} className="h-16 w-16 rounded-lg object-cover" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[13px] font-bold leading-tight">{product.name}</p>
+                          <button onClick={() => removeLine(line.productId, line.tier)} className="btn-press text-mute hover:text-berry" aria-label="حذف">
+                            <Icon name="x" size={14} />
+                          </button>
+                        </div>
+                        <p className="text-[11px] font-semibold text-mute">
+                          {pack.tier === "box" ? "علب" : pack.tier === "carton" ? "كراتين" : "طبالي"} × <span className="num">{line.qty}</span> · <span className="num">{Math.round(cartons * 10) / 10}</span> كرتونة
+                          {rate > 0 && <Badge tone="sage" className="ms-1.5 py-0.5">خصم −{Math.round(rate * 100)}٪</Badge>}
+                        </p>
+                        <div className="mt-1.5 flex items-center justify-between">
+                          <div className="flex items-center rounded-lg border border-linestrong bg-surface">
+                            <button className="btn-press p-1.5 text-mute hover:text-brand" onClick={() => setLineQty(line.productId, line.tier, line.qty - 1)}><Icon name="minus" size={13} /></button>
+                            <span className="num w-8 text-center text-[12.5px] font-bold">{line.qty}</span>
+                            <button className="btn-press p-1.5 text-mute hover:text-brand" onClick={() => setLineQty(line.productId, line.tier, line.qty + 1)}><Icon name="plus" size={13} /></button>
+                          </div>
+                          <span className="num text-[13.5px] font-extrabold">{fmtMoney(net, 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {sum.lines.length > 0 && (
-                <div className="border-t border-line bg-raise px-5 py-4">
-                  <div className="space-y-1 text-[12.5px]">
-                    <div className="flex justify-between"><span className="text-mute">Subtotal</span><span className="num font-bold">{fmtMoney(sum.subtotal)}</span></div>
-                    <div className="flex justify-between text-sage"><span>Volume discount</span><span className="num font-bold">−{fmtMoney(sum.volumeDiscount)}</span></div>
-                    <div className="flex justify-between"><span className="text-mute">Delivery {sum.deliveryFee === 0 && "(free > $400)"}</span><span className="num font-bold">{sum.deliveryFee ? fmtMoney(sum.deliveryFee) : "Free"}</span></div>
-                    <div className="mt-1 flex justify-between border-t border-dashed border-linestrong pt-2 font-display text-[16px] font-extrabold"><span>Total</span><span className="num text-brand">{fmtMoney(sum.total)}</span></div>
+                <div className="border-t border-line p-4">
+                  {sum.issues.map((iss, i) => (
+                    <p key={i} className="mb-2 flex items-center gap-1.5 rounded-md border border-berry/40 bg-berry/8 px-2.5 py-1.5 text-[11.5px] font-bold text-berry">
+                      <Icon name="alert" size={13} /> {iss}
+                    </p>
+                  ))}
+                  <div className="space-y-1 text-[12.5px] font-semibold">
+                    <p className="flex justify-between text-mute"><span>المجموع</span><span className="num">{fmtMoney(sum.subtotal, 0)}</span></p>
+                    <p className="flex justify-between text-sage"><span>خصم الكميات</span><span className="num">−{fmtMoney(sum.discount, 0)}</span></p>
+                    <p className="flex justify-between text-mute"><span>التوصيل</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></p>
+                    <p className="flex justify-between border-t border-line pt-2 text-[15px] font-extrabold"><span>الإجمالي</span><span className="num text-brand">{fmtMoney(sum.total, 0)}</span></p>
                   </div>
-                  {sum.issues.length > 0 && (
-                    <div className="mt-3 space-y-1.5">
-                      {sum.issues.map((iss) => (
-                        <p key={iss} className="flex items-start gap-1.5 rounded-md border border-berry/40 bg-berry/10 px-2.5 py-1.5 text-[11.5px] font-semibold text-berry">
-                          <Icon name="alert" size={13} className="mt-0.5 shrink-0" /> {iss}
-                        </p>
-                      ))}
-                    </div>
-                  )}
                   <Btn size="lg" className="mt-3 w-full py-3" disabled={sum.issues.length > 0} onClick={openCheckout}>
-                    Proceed to checkout <Icon name="arrow" size={16} />
+                    إتمام الطلب <Icon name="chevron" size={16} className="rotate-180" />
                   </Btn>
                 </div>
               )}
             </motion.aside>
-          </motion.div>
+          </>
         )}
       </AnimatePresence>
 
-      {/* ── Checkout modal ── */}
-      <AnimatePresence>
-        {checkoutOpen && (
-          <motion.div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-6"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="absolute inset-0 bg-sunken/70 backdrop-blur-[2px]" onClick={placed ? closeAll : undefined} />
-            <motion.div
-              initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 360, damping: 32 }}
-              className="relative flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-line bg-surface shadow-lift sm:rounded-2xl"
-            >
-              {placed ? (
-                /* success */
-                <div className="overflow-y-auto p-8 text-center">
-                  <motion.div initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 300, damping: 18, delay: 0.1 }}
-                    className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-sage text-cream">
-                    <Icon name="check" size={30} sw={2.2} />
-                  </motion.div>
-                  <h3 className="mt-4 font-display text-2xl font-extrabold">Into the ovens it goes.</h3>
-                  <p className="mt-1 text-[13px] text-mute">
-                    Order <span className="num font-bold text-ink">{placed.ref}</span> · <span className="num font-bold text-brand">{fmtMoney(placed.total)}</span> · delivery {placed.deliveryDate}, {placed.deliveryWindow}
-                  </p>
-                  <div className="mx-auto mt-6 max-w-md">
-                    <StageSteps status={0} timeline={placed.timeline} />
-                  </div>
-                  <p className="mx-auto mt-5 max-w-sm rounded-lg border border-line bg-raise px-4 py-3 text-[12px] leading-relaxed text-mute">
-                    You'll follow it live from <b>Pending → Baking & Packaging → Shipped → Delivered</b>. The plant floor just received the bake ticket.
-                  </p>
-                  <Btn size="lg" className="mt-5" onClick={closeAll}>Track order in pipeline</Btn>
+      {/* ── إتمام الطلب ── */}
+      <Modal open={checkoutOpen} onClose={reset} title={placedId ? "تم استلام الطلب" : "إتمام الطلب"} wide>
+        {placedId ? (
+          <div className="text-center">
+            <span className="pop mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-sage/15 text-sage">
+              <Icon name="check" size={30} strokeWidth={2.2} />
+            </span>
+            <h3 className="mt-4 font-display text-2xl font-bold">شكرًا لك! طلبك <span className="num text-brand">{placedId}</span> قيد المراجعة</h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-mute">
+              سيتواصل معك فريق المبيعات للتأكيد، ويمكنك متابعة الحالة لحظة بلحظة من صفحة «تتبع الطلبات».
+              التوصيل المجدول: <b className="text-ink">{fmtDateShort(date)} ({window_})</b>
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Btn variant="whatsapp" onClick={sendOrderWhatsApp}><Icon name="whatsapp" size={16} /> استلام الفاتورة واتساب</Btn>
+              <Btn onClick={() => { reset(); setView("orders"); }}><Icon name="truck" size={16} /> تتبّع الطلب</Btn>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* الخطوات */}
+            <div className="mb-5 flex items-center gap-1">
+              {STEPS.map((s, i) => (
+                <div key={s} className="flex flex-1 items-center gap-1">
+                  <span className={`num flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ${i < step ? "bg-sage text-cream" : i === step ? "bg-brand text-cream" : "bg-raise text-mute"}`}>
+                    {i < step ? <Icon name="check" size={13} /> : i + 1}
+                  </span>
+                  <span className={`hidden text-[11.5px] font-bold sm:block ${i === step ? "text-brand" : "text-mute"}`}>{s}</span>
+                  {i < STEPS.length - 1 && <span className={`h-0.5 flex-1 rounded ${i < step ? "bg-sage" : "bg-line"}`} />}
                 </div>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between border-b border-line px-6 py-4">
-                    <div>
-                      <h3 className="font-display text-lg font-extrabold">Checkout</h3>
-                      <div className="mt-1 flex items-center gap-1.5">
-                        {STEPS.map((s, i) => (
-                          <span key={s} className="flex items-center gap-1.5">
-                            <span className={`num flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                              i < step ? "bg-sage text-cream" : i === step ? "bg-brand text-cream" : "bg-raise text-mute border border-line"}`}>{i + 1}</span>
-                            <span className={`text-[11px] font-bold ${i === step ? "text-ink" : "text-mute"}`}>{s}</span>
-                            {i < 2 && <span className="h-px w-5 bg-line" />}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <button onClick={() => setCheckoutOpen(false)} className="btn-press rounded-lg p-1.5 text-mute hover:bg-raise hover:text-ink"><Icon name="x" size={18} /></button>
+              ))}
+            </div>
+
+            {step === 0 && (
+              <div className="space-y-3">
+                {sum.lines.map(({ line, product, cartons, rate, net }) => (
+                  <div key={`${line.productId}-${line.tier}`} className="flex items-center justify-between rounded-lg border border-line bg-raise px-3.5 py-2.5">
+                    <span className="text-[13px] font-bold">{product.name} <span className="text-mute">× {line.qty} ({line.tier === "box" ? "علب" : line.tier === "carton" ? "كراتين" : "طبالي"})</span></span>
+                    <span className="flex items-center gap-2">
+                      {rate > 0 && <Badge tone="sage">−{Math.round(rate * 100)}٪</Badge>}
+                      <span className="num text-[13px] font-extrabold">{fmtMoney(net, 0)}</span>
+                    </span>
                   </div>
+                ))}
+                <p className="text-[12px] font-semibold text-mute">
+                  إجمالي الكمية: <b className="num">{Math.round(sum.cartons)}</b> كرتونة · الإجمالي بعد الخصم: <b className="num text-brand">{fmtMoney(sum.total, 0)}</b>
+                </p>
+                <Btn className="w-full" onClick={() => setStep(1)}>متابعة إلى بيانات التوصيل <Icon name="chevron" size={15} className="rotate-180" /></Btn>
+              </div>
+            )}
 
-                  <div className="flex-1 overflow-y-auto p-6">
-                    {step === 0 && (
-                      <div className="space-y-2.5">
-                        {sum.lines.map((l) => (
-                          <div key={l.product.id + l.tier} className="flex items-center justify-between rounded-lg border border-line bg-raise px-3.5 py-2.5 text-[12.5px]">
-                            <span className="font-bold">{l.qty}× {l.product.name} <span className="font-normal capitalize text-mute">({l.tier})</span></span>
-                            <span className="num font-bold">{fmtMoney(l.afterDiscount)}</span>
-                          </div>
-                        ))}
-                        <div className="rounded-lg border border-line bg-cream px-3.5 py-3 text-[12.5px] dark:bg-raise">
-                          <div className="flex justify-between"><span className="text-mute">Subtotal</span><span className="num">{fmtMoney(sum.subtotal)}</span></div>
-                          <div className="flex justify-between text-sage"><span>Volume discount</span><span className="num">−{fmtMoney(sum.volumeDiscount)}</span></div>
-                          <div className="flex justify-between"><span className="text-mute">Delivery</span><span className="num">{sum.deliveryFee ? fmtMoney(sum.deliveryFee) : "Free"}</span></div>
-                          <div className="mt-1.5 flex justify-between border-t border-dashed border-linestrong pt-1.5 font-display text-[15px] font-extrabold"><span>Total</span><span className="num text-brand">{fmtMoney(sum.total)}</span></div>
-                        </div>
-                        <Badge tone="butter"><Icon name="users" size={12} /> Ordering as {user.org ?? user.name} · {user.org ? "B2B contract pricing" : "Retail"}</Badge>
-                      </div>
-                    )}
+            {step === 1 && (
+              <div className="space-y-3.5">
+                <div className="grid gap-3.5 sm:grid-cols-2">
+                  <Field label="اسم العميل / المنشأة">
+                    <input className={inputCls} value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="مثال: أسواق النخيل" />
+                  </Field>
+                  <Field label="رقم الجوال (واتساب)">
+                    <input className={`${inputCls} num`} dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9665xxxxxxxx" />
+                  </Field>
+                  <Field label="تاريخ التوصيل" hint="التوصيل متاح من بعد يومين — لا توصيل يوم الجمعة">
+                    <input type="date" min={deliveryMinDate()} className={`${inputCls} num`} value={date} onChange={(e) => setDate(e.target.value)} />
+                  </Field>
+                  <Field label="الفترة الزمنية">
+                    <select className={inputCls} value={window_} onChange={(e) => setWindow_(e.target.value)}>
+                      {["08:00 – 12:00", "12:00 – 16:00", "16:00 – 20:00"].map((w) => <option key={w} value={w}>{w}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div className="flex gap-2">
+                  <Btn variant="outline" onClick={() => setStep(0)}><Icon name="chevron" size={15} /> رجوع</Btn>
+                  <Btn className="flex-1" onClick={() => setStep(2)}>متابعة إلى الدفع <Icon name="chevron" size={15} className="rotate-180" /></Btn>
+                </div>
+              </div>
+            )}
 
-                    {step === 1 && (
-                      <div className="space-y-4">
-                        <Field label="Delivery address">
-                          <textarea className={`${inputCls} min-h-[74px]`} placeholder="Warehouse / store address, city, contact phone…" value={address} onChange={(e) => setAddress(e.target.value)} />
-                        </Field>
-                        <div className="grid grid-cols-2 gap-3">
-                          <Field label="Delivery date" hint="Earliest: tomorrow">
-                            <input type="date" min={tomorrow} className={`${inputCls} num`} value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
-                          </Field>
-                          <Field label="Time window">
-                            <select className={inputCls} value={window_} onChange={(e) => setWindow(e.target.value)}>
-                              {WINDOWS.map((w) => <option key={w}>{w}</option>)}
-                            </select>
-                          </Field>
-                        </div>
-                        <p className="flex items-center gap-2 rounded-lg border border-line bg-raise px-3 py-2.5 text-[11.5px] text-mute">
-                          <Icon name="truck" size={15} className="text-brand" /> Refrigerated trucks, GPS-tracked. Pallet orders include free unloading assistance.
-                        </p>
-                      </div>
-                    )}
-
-                    {step === 2 && (
-                      <div className="space-y-2.5">
-                        {([
-                          { k: "cod" as const, t: "Cash on delivery", d: "Pay the driver on arrival — cash or card terminal", ic: "wallet" as const },
-                          { k: "bank" as const, t: "Bank transfer (invoice)", d: "Pro-forma invoice issued, goods ship after clearance · NET 7 for B2B", ic: "doc" as const },
-                          { k: "card" as const, t: "Card — payment gateway", d: "Stripe / Meeza · tokenized, PCI-DSS · 2.9% + 30¢", ic: "shield" as const },
-                        ]).map((m) => (
-                          <button key={m.k} onClick={() => setPayment(m.k)}
-                            className={`btn-press flex w-full items-center gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-all ${
-                              payment === m.k ? "border-brand bg-brand/8 shadow-warm" : "border-line bg-surface hover:border-linestrong"}`}>
-                            <span className={`rounded-lg border p-2.5 ${payment === m.k ? "border-brand bg-brand text-cream" : "border-line bg-raise text-mute"}`}>
-                              <Icon name={m.ic} size={17} />
-                            </span>
-                            <span className="flex-1">
-                              <span className="block text-[13.5px] font-bold">{m.t}</span>
-                              <span className="block text-[11.5px] text-mute">{m.d}</span>
-                            </span>
-                            <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 ${payment === m.k ? "border-brand" : "border-linestrong"}`}>
-                              {payment === m.k && <span className="h-2.5 w-2.5 rounded-full bg-brand" />}
-                            </span>
-                          </button>
-                        ))}
-                        {payment === "bank" && (
-                          <p className="rounded-lg border border-line bg-raise px-3.5 py-2.5 text-[11.5px] leading-relaxed text-mute">
-                            A pro-forma invoice with IBAN <span className="num font-bold text-ink">EG·80·OWBW·0400·2219·87</span> will be emailed within 15 minutes. Reference it in the transfer.
-                          </p>
-                        )}
-                        {payment === "card" && (
-                          <div className="grid grid-cols-3 gap-2 rounded-lg border border-line bg-raise p-3">
-                            <div className="col-span-3"><input className={`${inputCls} num`} placeholder="4242 4242 4242 4242" /></div>
-                            <input className={`${inputCls} num col-span-1`} placeholder="MM/YY" />
-                            <input className={`${inputCls} num col-span-1`} placeholder="CVC" />
-                            <input className={`${inputCls} col-span-1`} placeholder="ZIP" />
-                            <p className="col-span-3 text-[10.5px] text-mute">Demo only — card data never leaves this page and is never stored.</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-line bg-raise px-6 py-4">
-                    <Btn variant="ghost" onClick={() => (step === 0 ? setCheckoutOpen(false) : setStep(step - 1))}>
-                      {step === 0 ? "Back to cart" : "Back"}
-                    </Btn>
-                    <div className="flex items-center gap-3">
-                      <span className="num text-[13px] font-bold text-mute">{fmtMoney(sum.total)}</span>
-                      {step < 2 ? (
-                        <Btn onClick={() => setStep(step + 1)} disabled={step === 1 && !addressOk}>
-                          Continue <Icon name="arrow" size={15} />
-                        </Btn>
-                      ) : (
-                        <Btn variant="sage" onClick={confirm}><Icon name="check" size={15} /> Place order</Btn>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </motion.div>
-          </motion.div>
+            {step === 2 && (
+              <div className="space-y-3.5">
+                <p className="label-xs">طريقة الدفع</p>
+                {(Object.keys(PAY_AR) as PaymentMethod[]).map((m) => (
+                  <button key={m} onClick={() => setPayment(m)}
+                    className={`btn-press flex w-full items-center justify-between rounded-xl border px-4 py-3 text-start ${payment === m ? "border-brand bg-brand/8 shadow-warm" : "border-line bg-surface hover:border-linestrong"}`}>
+                    <span className="flex items-center gap-3">
+                      <Icon name={m === "cod" ? "truck" : m === "transfer" ? "sheet" : "shield"} size={19} className={payment === m ? "text-brand" : "text-mute"} />
+                      <span>
+                        <span className="block text-[13.5px] font-bold">{PAY_AR[m]}</span>
+                        <span className="block text-[11px] text-mute">
+                          {m === "cod" ? "ادفع نقدًا أو بالشبكة عند الاستلام" : m === "transfer" ? "نرسل فاتورة بالآيبان — التحويل خلال ٤٨ ساعة" : "مدى / فيزا / ماستركارد عبر بوابة آمنة"}
+                        </span>
+                      </span>
+                    </span>
+                    <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 ${payment === m ? "border-brand bg-brand text-cream" : "border-linestrong"}`}>
+                      {payment === m && <Icon name="check" size={11} />}
+                    </span>
+                  </button>
+                ))}
+                <div className="rounded-xl border border-line bg-raise p-3.5 text-[12.5px] font-semibold">
+                  <div className="flex justify-between"><span className="text-mute">الإجمالي بعد الخصم</span><span className="num">{fmtMoney(sum.subtotal - sum.discount, 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-mute">التوصيل</span><span className="num">{sum.deliveryFee === 0 ? "مجاني" : fmtMoney(sum.deliveryFee, 0)}</span></div>
+                  <div className="mt-1.5 flex justify-between border-t border-line pt-2 text-[15px] font-extrabold"><span>المستحق</span><span className="num text-brand">{fmtMoney(sum.total, 0)}</span></div>
+                </div>
+                <div className="flex gap-2">
+                  <Btn variant="outline" onClick={() => setStep(1)}><Icon name="chevron" size={15} /> رجوع</Btn>
+                  <Btn variant="sage" size="lg" className="flex-1 py-3" onClick={confirm} disabled={!customer.trim()}>
+                    <Icon name="stamp" size={17} /> تأكيد الطلب — {fmtMoney(sum.total, 0)}
+                  </Btn>
+                </div>
+                <p className="text-center text-[11px] text-mute">بالتأكيد توافق على شروط البيع بالجملة · {STATUS_AR.pending} ← الخبز والتعبئة ← الشحن ← التسليم</p>
+              </div>
+            )}
+          </>
         )}
-      </AnimatePresence>
+      </Modal>
     </>
   );
 }

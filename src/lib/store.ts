@@ -1,324 +1,368 @@
 import { create } from "zustand";
 import type {
   Advance, AttendanceRecord, AuditEntry, Batch, CartLine, Employee, LeaveRequest,
-  Order, OrderStatus, PackTier, Product, RawMaterial, Role, Severity, User, ViewKey,
+  LeaveStatus, LeaveType, OfflinePunch, Order, OrderStatus, PackTier, PaymentMethod,
+  Product, RawMaterial, Role, User, View,
 } from "./types";
-import { ORDER_STAGES } from "./types";
 import {
-  ADVANCES, ATTENDANCE, AUDIT_SEED, BATCHES, EMPLOYEES, LEAVES, ORDERS,
-  PRODUCTS, RAW_MATERIALS, USERS,
+  ADVANCES_SEED, ATTENDANCE_SEED, AUDIT_SEED, BATCHES, EMPLOYEES, LEAVES_SEED,
+  ORDERS_SEED, PRODUCTS, RAW_MATERIALS, USERS,
 } from "./data";
-import { cartonsOf, nowMin, todayKey, volumeRate } from "./payroll";
+import {
+  addDays, cartonsOf, computePayroll, dateKey, dayStats, fmtMin, fmtMoney0,
+  monthKeyNow, monthLabel, nowMin, round2, todayKey, volumeRate,
+} from "./payroll";
 
-export const ROLE_LABEL: Record<Role, string> = {
-  super_admin: "Super Admin",
-  hr: "HR Manager",
-  production: "Production Mgr",
-  sales: "Sales Rep",
-  customer: "Customer",
+export type ToastTone = "sage" | "brand" | "berry" | "butter";
+export interface Toast { id: number; msg: string; tone: ToastTone }
+
+const NEXT: Record<OrderStatus, OrderStatus> = {
+  pending: "baking", baking: "shipped", shipped: "delivered", delivered: "delivered",
 };
 
-export const NAV_ACCESS: Record<ViewKey, Role[]> = {
-  dashboard: ["super_admin", "hr", "production", "sales", "customer"],
-  market: ["super_admin", "hr", "production", "sales", "customer"],
-  orders: ["super_admin", "sales", "customer"],
-  attendance: ["super_admin", "hr", "production"],
-  payroll: ["super_admin", "hr"],
-  leaves: ["super_admin", "hr"],
-  inventory: ["super_admin", "production"],
-  system: ["super_admin"],
+export const STATUS_AR: Record<OrderStatus, string> = {
+  pending: "قيد المراجعة", baking: "الخبز والتعبئة", shipped: "تم الشحن", delivered: "تم التسليم",
+};
+export const PAY_AR: Record<PaymentMethod, string> = {
+  cod: "الدفع عند الاستلام", transfer: "تحويل بنكي", gateway: "بوابة دفع إلكترونية",
+};
+export const LEAVE_AR: Record<LeaveType, string> = {
+  sick: "مرضية", annual: "سنوية", unpaid: "غير مدفوعة", permission: "إذن ساعات",
+};
+export const ROLE_AR: Record<Role, string> = {
+  super: "المدير العام", hr: "موارد بشرية", production: "إنتاج ومخزون", sales: "مبيعات", customer: "موظف",
 };
 
-const DEFAULT_VIEW: Record<Role, ViewKey> = {
-  super_admin: "dashboard", hr: "attendance", production: "inventory",
-  sales: "orders", customer: "market",
-};
+let toastSeq = 1;
+let auditSeq = 100;
 
-export interface CartLineDetail {
-  product: Product; tier: PackTier; qty: number; unitPrice: number;
-  packUnits: number; lineTotal: number; cartons: number; discount: number; afterDiscount: number;
-}
-export interface CartSummary {
-  lines: CartLineDetail[]; subtotal: number; volumeDiscount: number;
-  deliveryFee: number; total: number; issues: string[]; count: number;
-}
+export const cartSummary = (cart: CartLine[], products: Product[]) => {
+  let subtotal = 0, discount = 0, cartons = 0;
+  const issues: string[] = [];
+  const lines = cart.map((l) => {
+    const p = products.find((x) => x.id === l.productId)!;
+    const pack = p.packs.find((k) => k.tier === l.tier)!;
+    const c = cartonsOf(l.tier, l.qty);
+    const gross = pack.price * pack.units * l.qty;
+    const rate = volumeRate(c);
+    subtotal += gross;
+    discount += gross * rate;
+    cartons += c;
+    if (c < p.moqCartons) issues.push(`الحد الأدنى لطلب «${p.name}» هو ${p.moqCartons} كراتين`);
+    if (c > p.stock) issues.push(`الكمية المطلوبة من «${p.name}» تتجاوز المتوفر (${p.stock} كرتونة)`);
+    return { line: l, product: p, pack, cartons: c, rate, gross, net: gross * (1 - rate) };
+  });
+  const deliveryFee = subtotal - discount >= 1500 ? 0 : 45;
+  const total = round2(subtotal - discount + deliveryFee);
+  return { lines, subtotal: round2(subtotal), discount: round2(discount), cartons, deliveryFee, total, issues };
+};
 
 interface State {
-  theme: "light" | "dark";
   user: User;
-  view: ViewKey;
-  cartOpen: boolean;
-  checkoutOpen: boolean;
-  toast: { msg: string; tone: "ok" | "warn" } | null;
+  users: User[];
+  loginAs: (id: string) => void;
+
+  theme: "light" | "dark";
+  toggleTheme: () => void;
+
+  view: View;
+  setView: (v: View) => void;
 
   employees: Employee[];
   attendance: AttendanceRecord[];
+  punch: (empId: string, type: "in" | "out") => AttendanceRecord | null;
+  manualPunch: (empId: string, date: string, inMin: number, outMin: number | null) => void;
+  adjustSalary: (empId: string, newBase: number) => void;
+
+  online: boolean;
+  setOnline: (v: boolean) => void;
+  offlineQueue: OfflinePunch[];
+
   leaves: LeaveRequest[];
+  applyLeave: (empId: string, type: LeaveType, from: string, to: string, reason: string) => void;
+  decideLeave: (id: string, status: LeaveStatus) => void;
+
   advances: Advance[];
+  addAdvance: (empId: string, amount: number, note: string) => void;
   finalizedMonths: string[];
+  finalizePayroll: (month: string) => void;
+
   products: Product[];
-  orders: Order[];
   cart: CartLine[];
-  rawMaterials: RawMaterial[];
-  batches: Batch[];
-  audit: AuditEntry[];
-
-  toggleTheme: () => void;
-  loginAs: (id: string) => void;
-  setView: (v: ViewKey) => void;
-  setCartOpen: (b: boolean) => void;
-  setCheckoutOpen: (b: boolean) => void;
-  pushToast: (msg: string, tone?: "ok" | "warn") => void;
-  clearToast: () => void;
-  log: (action: string, target: string, detail: string, severity: Severity) => void;
-
-  checkIn: (empId: string) => void;
-  checkOut: (empId: string) => void;
-  manualPunch: (empId: string, cin: number, cout: number | null, note: string) => void;
-  adjustSalary: (empId: string, delta: number) => void;
-  grantAdvance: (empId: string, amount: number, note: string) => void;
-  decideLeave: (id: string, approve: boolean) => void;
-  finalizePayroll: (monthKey: string) => void;
-
+  cartOpen: boolean;
+  setCartOpen: (v: boolean) => void;
+  checkoutOpen: boolean;
+  setCheckoutOpen: (v: boolean) => void;
   addToCart: (productId: string, tier: PackTier, qty: number) => void;
-  setCartQty: (productId: string, tier: PackTier, qty: number) => void;
-  removeCartLine: (productId: string, tier: PackTier) => void;
-  cartSummary: () => CartSummary;
-  placeOrder: (d: { payment: Order["payment"]; deliveryDate: string; deliveryWindow: string; address: string }) => Order | null;
+  setLineQty: (productId: string, tier: PackTier, qty: number) => void;
+  removeLine: (productId: string, tier: PackTier) => void;
+  orders: Order[];
+  placeOrder: (customer: string, phone: string, deliverOn: string, window: string, payment: PaymentMethod) => Order;
   advanceOrder: (id: string) => void;
-  receiveStock: (rmId: string, qty: number) => void;
+
+  raw: RawMaterial[];
+  receiveStock: (id: string, qty: number) => void;
+  batches: Batch[];
+
+  audit: AuditEntry[];
+  toasts: Toast[];
+  toast: (msg: string, tone?: ToastTone) => void;
+  auditLog: (actor: string, role: Role, action: string, detail: string) => void;
 }
 
-const uid = () => Math.random().toString(36).slice(2, 9);
-const stored = (k: string, fallback: string) => {
-  try { return localStorage.getItem(k) ?? fallback; } catch { return fallback; }
-};
-const initialUser = USERS.find((u) => u.id === stored("ow-user", "u-samir")) ?? USERS[0];
-const initialTheme = (stored("ow-theme", "light") as "light" | "dark");
-
 export const useStore = create<State>((set, get) => ({
-  theme: initialTheme,
-  user: initialUser,
-  view: DEFAULT_VIEW[initialUser.role],
-  cartOpen: false,
-  checkoutOpen: false,
-  toast: null,
+  user: USERS[0],
+  users: USERS,
+  loginAs: (id) => {
+    const u = USERS.find((x) => x.id === id)!;
+    set({ user: u });
+    get().toast(`مرحبًا بك، ${u.name} — تم الدخول بصلاحية «${ROLE_AR[u.role]}»`, "brand");
+  },
+
+  theme: (typeof localStorage !== "undefined" && (localStorage.getItem("ow-theme") as "light" | "dark")) || "light",
+  toggleTheme: () => {
+    const t = get().theme === "light" ? "dark" : "light";
+    document.documentElement.classList.toggle("dark", t === "dark");
+    localStorage.setItem("ow-theme", t);
+    set({ theme: t });
+  },
+
+  view: "dashboard",
+  setView: (v) => set({ view: v }),
 
   employees: EMPLOYEES,
-  attendance: ATTENDANCE,
-  leaves: LEAVES,
-  advances: ADVANCES,
-  finalizedMonths: [],
-  products: PRODUCTS,
-  orders: ORDERS,
-  cart: [],
-  rawMaterials: RAW_MATERIALS,
-  batches: BATCHES,
-  audit: AUDIT_SEED,
+  attendance: ATTENDANCE_SEED,
 
-  toggleTheme: () => set((s) => {
-    const t = s.theme === "light" ? "dark" : "light";
-    try { localStorage.setItem("ow-theme", t); } catch { /* private mode */ }
-    document.documentElement.classList.toggle("dark", t === "dark");
-    return { theme: t };
-  }),
-
-  loginAs: (id) => {
-    const user = USERS.find((u) => u.id === id) ?? USERS[0];
-    try { localStorage.setItem("ow-user", id); } catch { /* noop */ }
-    set({ user, view: DEFAULT_VIEW[user.role], cartOpen: false, checkoutOpen: false });
-    get().pushToast(`Signed in as ${user.name} · ${ROLE_LABEL[user.role]}`);
-  },
-
-  setView: (v) => set({ view: v }),
-  setCartOpen: (b) => set({ cartOpen: b }),
-  setCheckoutOpen: (b) => set({ checkoutOpen: b }),
-  pushToast: (msg, tone = "ok") => {
-    set({ toast: { msg, tone } });
-    setTimeout(() => get().clearToast(), 3200);
-  },
-  clearToast: () => set({ toast: null }),
-
-  log: (action, target, detail, severity) => set((s) => ({
-    audit: [{
-      id: `au-${uid()}`, at: new Date().toISOString(), actor: s.user.name,
-      role: s.user.role, action, target, detail, severity,
-    }, ...s.audit],
-  })),
-
-  // ── Time tracking ────────────────────────────────────────────────────────
-  checkIn: (empId) => {
-    const t = todayKey();
+  punch: (empId, type) => {
     const s = get();
-    const existing = s.attendance.find((a) => a.empId === empId && a.date === t);
-    if (existing && existing.in != null) { get().pushToast("Already checked in today", "warn"); return; }
-    const rec: AttendanceRecord = existing
-      ? { ...existing, in: nowMin(), source: "qr" }
-      : { id: `a-${empId}-${t}`, empId, date: t, in: nowMin(), out: null, source: "qr" };
-    set({ attendance: existing ? s.attendance.map((a) => (a.id === existing.id ? rec : a)) : [...s.attendance, rec] });
+    const emp = s.employees.find((e) => e.id === empId)!;
+    const t = nowMin();
+    const date = todayKey();
+    const st = s.attendance.find((a) => a.empId === empId && a.date === date);
+
+    if (!s.online) {
+      const q: OfflinePunch = { id: `oq-${Date.now()}`, empId, type, at: new Date().toISOString() };
+      set({ offlineQueue: [...s.offlineQueue, q] });
+      s.auditLog(s.user.name, s.user.role, `تسجيل ${type === "in" ? "حضور" : "انصراف"} دون اتصال`, `${emp.name} — ${fmtMin(t)} (حُفظ محليًا وسيُزامَن)`);
+      s.toast("لا يوجد اتصال بالإنترنت — حُفظ التسجيل محليًا وسيُزامَن تلقائيًا", "butter");
+      return null;
+    }
+
+    if (type === "in") {
+      if (st && st.in != null) {
+        s.toast(`سُجّل حضورك مسبقًا الساعة ${fmtMin(st.in)}`, "butter");
+        return st;
+      }
+      const rec: AttendanceRecord = {
+        id: `at-${Date.now()}`, empId, date, in: t,
+        out: st?.out ?? null, method: "qr",
+      };
+      set({ attendance: [...s.attendance, rec] });
+      const late = dayStats(rec, emp.shift).late;
+      s.toast(`تم تسجيل الحضور الساعة ${fmtMin(t)}${late > 0 ? ` — تنبيه: متأخر ${late} دقيقة` : " — في الوقت المحدد"}`, late > 0 ? "berry" : "sage");
+      return rec;
+    }
+    if (!st || st.in == null) {
+      s.toast("يجب تسجيل الحضور أولًا قبل الانصراف", "berry");
+      return null;
+    }
+    if (st.out != null) {
+      s.toast(`سُجّل انصرافك مسبقًا الساعة ${fmtMin(st.out)}`, "butter");
+      return st;
+    }
+    const upd = { ...st, out: t };
+    set({ attendance: s.attendance.map((a) => (a.id === st.id ? upd : a)) });
+    s.toast(`تم تسجيل الانصراف الساعة ${fmtMin(t)} — يوم عمل موفق`, "sage");
+    return upd;
   },
-  checkOut: (empId) => {
-    const t = todayKey();
+
+  manualPunch: (empId, date, inMin, outMin) => {
     const s = get();
-    set({
-      attendance: s.attendance.map((a) =>
-        a.empId === empId && a.date === t && a.in != null ? { ...a, out: nowMin() } : a
-      ),
-    });
-  },
-  manualPunch: (empId, cin, cout, note) => {
-    const t = todayKey();
-    const s = get();
-    const existing = s.attendance.find((a) => a.empId === empId && a.date === t);
+    const emp = s.employees.find((e) => e.id === empId)!;
     const rec: AttendanceRecord = {
-      id: existing?.id ?? `a-${empId}-${t}`, empId, date: t, in: cin, out: cout,
-      source: "supervisor", note,
+      id: `at-${Date.now()}`, empId, date, in: inMin, out: outMin, method: "manual", bySupervisor: true,
     };
-    set({ attendance: existing ? s.attendance.map((a) => (a.id === existing.id ? rec : a)) : [...s.attendance, rec] });
-    const emp = s.employees.find((e) => e.id === empId);
-    get().log("Manual attendance entry", `${emp?.name ?? empId} · ${t}`, note || "Supervisor desk entry", "warning");
-  },
-  adjustSalary: (empId, delta) => {
-    const s = get();
-    set({ employees: s.employees.map((e) => (e.id === empId ? { ...e, baseSalary: e.baseSalary + delta } : e)) });
-    const emp = s.employees.find((e) => e.id === empId);
-    get().log("Salary adjustment", `${emp?.name} · ${delta > 0 ? "+" : ""}$${delta}/mo`, "RBAC: super_admin only · dual approval recorded", "critical");
-    get().pushToast(`Salary updated for ${emp?.name}`);
-  },
-  grantAdvance: (empId, amount, note) => {
-    set((s) => ({ advances: [...s.advances, { id: `ad-${uid()}`, empId, amount, date: todayKey(), note }] }));
-    const emp = get().employees.find((e) => e.id === empId);
-    get().log("Payroll advance issued", `${emp?.name} · $${amount}`, note, "warning");
-    get().pushToast(`Advance of $${amount} recorded for ${emp?.name}`);
-  },
-  decideLeave: (id, approve) => {
-    set((s) => ({
-      leaves: s.leaves.map((l) =>
-        l.id === id ? { ...l, status: approve ? "approved" : "rejected", decidedBy: s.user.name } : l
-      ),
-    }));
-    const l = get().leaves.find((x) => x.id === id);
-    const emp = get().employees.find((e) => e.id === l?.empId);
-    get().log(approve ? "Leave approved" : "Leave rejected", `${emp?.name} · ${l?.type} × ${l?.days}d`, l?.reason ?? "", "info");
-    get().pushToast(`Leave ${approve ? "approved" : "rejected"} for ${emp?.name}`);
-  },
-  finalizePayroll: (monthKey) => {
-    const s = get();
-    if (s.finalizedMonths.includes(monthKey)) return;
-    set({
-      finalizedMonths: [...s.finalizedMonths, monthKey],
-      advances: s.advances.map((a) => (a.settledMonth ? a : { ...a, settledMonth: monthKey })),
-    });
-    get().log("Payroll run finalized", `${monthKey} · ${s.employees.length} employees`, "Payslips issued & advances (السلف) settled", "critical");
-    get().pushToast(`Payroll for ${monthKey} finalized — payslips issued`);
+    set({ attendance: [...s.attendance.filter((a) => !(a.empId === empId && a.date === date)), rec] });
+    s.auditLog(s.user.name, s.user.role, "إدخال حضور يدوي", `${emp.name} — ${date} من ${fmtMin(inMin)} إلى ${outMin == null ? "—" : fmtMin(outMin)}`);
+    s.toast(`تم الإدخال اليدوي لحضور ${emp.name}`, "brand");
   },
 
-  // ── Commerce ─────────────────────────────────────────────────────────────
+  adjustSalary: (empId, newBase) => {
+    const s = get();
+    const emp = s.employees.find((e) => e.id === empId)!;
+    set({ employees: s.employees.map((e) => (e.id === empId ? { ...e, baseSalary: newBase } : e)) });
+    s.auditLog(s.user.name, s.user.role, "تعديل راتب أساسي", `${emp.name}: ${fmtMoney0(emp.baseSalary)} ← ${fmtMoney0(newBase)}`);
+    s.toast(`تم تعديل راتب ${emp.name} إلى ${fmtMoney0(newBase)} — سُجّل في التدقيق`, "brand");
+  },
+
+  online: typeof navigator !== "undefined" ? navigator.onLine : true,
+  setOnline: (v) => {
+    const s = get();
+    set({ online: v });
+    if (!v) {
+      s.toast("انقطع الاتصال — وضع العمل دون اتصال مفعّل", "butter");
+      return;
+    }
+    if (s.offlineQueue.length === 0) {
+      s.toast("عاد الاتصال بالإنترنت", "sage");
+      return;
+    }
+    let attendance = [...s.attendance];
+    let synced = 0;
+    for (const q of s.offlineQueue) {
+      const d = new Date(q.at);
+      const date = dateKey(d);
+      const t = d.getHours() * 60 + d.getMinutes();
+      const existing = attendance.find((a) => a.empId === q.empId && a.date === date);
+      if (q.type === "in") {
+        if (existing && existing.in != null) continue;
+        if (existing) {
+          attendance = attendance.map((a) => (a.id === existing.id ? { ...a, in: t, method: "manual" as const } : a));
+        } else {
+          attendance.push({ id: `at-${Date.now()}-${synced}`, empId: q.empId, date, in: t, out: null, method: "manual" });
+        }
+      } else {
+        if (!existing || existing.in == null || existing.out != null) continue;
+        attendance = attendance.map((a) => (a.id === existing.id ? { ...a, out: t } : a));
+      }
+      synced++;
+    }
+    set({ attendance, offlineQueue: [] });
+    s.auditLog("النظام", "super", "مزامنة تسجيلات دون اتصال", `تمت مزامنة ${synced} تسجيل محفوظ محليًا بعد عودة الاتصال`);
+    s.toast(`عاد الاتصال — تمت مزامنة ${synced} تسجيل محفوظ`, "sage");
+  },
+  offlineQueue: [],
+
+  leaves: LEAVES_SEED,
+  applyLeave: (empId, type, from, to, reason) => {
+    const s = get();
+    set({
+      leaves: [{ id: `lv-${Date.now()}`, empId, type, from, to, reason, status: "pending" }, ...s.leaves],
+    });
+    s.toast("تم إرسال طلب الإجازة — بانتظار موافقة الموارد البشرية", "brand");
+  },
+  decideLeave: (id, status) => {
+    const s = get();
+    const lv = s.leaves.find((l) => l.id === id)!;
+    const emp = s.employees.find((e) => e.id === lv.empId)!;
+    set({ leaves: s.leaves.map((l) => (l.id === id ? { ...l, status } : l)) });
+    s.auditLog(s.user.name, s.user.role, status === "approved" ? "الموافقة على إجازة" : "رفض إجازة", `${emp.name} — ${LEAVE_AR[lv.type]} من ${lv.from} إلى ${lv.to}`);
+    s.toast(status === "approved" ? `تمت الموافقة على طلب ${emp.name}` : `تم رفض طلب ${emp.name}`, status === "approved" ? "sage" : "berry");
+  },
+
+  advances: ADVANCES_SEED,
+  addAdvance: (empId, amount, note) => {
+    const s = get();
+    const emp = s.employees.find((e) => e.id === empId)!;
+    set({
+      advances: [{ id: `ad-${Date.now()}`, empId, amount, note, date: todayKey() }, ...s.advances],
+    });
+    s.auditLog(s.user.name, s.user.role, "تسجيل سلفة", `${emp.name} — ${fmtMoney0(amount)} (${note})`);
+    s.toast(`تم تسجيل سلفة ${fmtMoney0(amount)} لـ${emp.name} — ستُخصم من مسير الشهر تلقائيًا`, "brand");
+  },
+
+  finalizedMonths: [],
+  finalizePayroll: (month) => {
+    const s = get();
+    if (s.finalizedMonths.includes(month)) return;
+    const active = s.employees.filter((e) => e.active);
+    const totals = active.map((e) => computePayroll(e, month, s.attendance, s.leaves, s.advances));
+    const netSum = round2(totals.reduce((x, r) => x + r.net, 0));
+    set({
+      finalizedMonths: [...s.finalizedMonths, month],
+      advances: s.advances.map((a) => (a.settledMonth ? a : { ...a, settledMonth: month })),
+    });
+    s.auditLog(s.user.name, s.user.role, "اعتماد مسير رواتب", `اعتماد مسير ${monthLabel(month)} — ${active.length} قسيمة بإجمالي ${fmtMoney0(netSum)}`);
+    s.toast(`تم اعتماد مسير ${monthLabel(month)}: ${active.length} قسيمة بإجمالي ${fmtMoney0(netSum)}`, "sage");
+  },
+
+  products: PRODUCTS,
+  cart: [],
+  cartOpen: false,
+  setCartOpen: (v) => set({ cartOpen: v }),
+  checkoutOpen: false,
+  setCheckoutOpen: (v) => set({ checkoutOpen: v }),
   addToCart: (productId, tier, qty) => {
     const s = get();
-    const existing = s.cart.find((c) => c.productId === productId && c.tier === tier);
-    set({
-      cart: existing
-        ? s.cart.map((c) => (c === existing ? { ...c, qty: c.qty + qty } : c))
-        : [...s.cart, { productId, tier, qty }],
-      cartOpen: true,
-    });
-    const p = s.products.find((x) => x.id === productId);
-    get().pushToast(`${p?.name} · ${tier} added to order`);
+    const existing = s.cart.find((l) => l.productId === productId && l.tier === tier);
+    const cart = existing
+      ? s.cart.map((l) => (l === existing ? { ...l, qty: l.qty + qty } : l))
+      : [...s.cart, { productId, tier, qty }];
+    set({ cart });
+    const p = s.products.find((x) => x.id === productId)!;
+    s.toast(`أُضيف إلى السلة: ${p.name}`, "sage");
   },
-  setCartQty: (productId, tier, qty) => set((s) => ({
-    cart: qty <= 0
-      ? s.cart.filter((c) => !(c.productId === productId && c.tier === tier))
-      : s.cart.map((c) => (c.productId === productId && c.tier === tier ? { ...c, qty } : c)),
-  })),
-  removeCartLine: (productId, tier) => set((s) => ({
-    cart: s.cart.filter((c) => !(c.productId === productId && c.tier === tier)),
-  })),
+  setLineQty: (productId, tier, qty) =>
+    set((s) => ({
+      cart: s.cart.map((l) => (l.productId === productId && l.tier === tier ? { ...l, qty: Math.max(1, qty) } : l)),
+    })),
+  removeLine: (productId, tier) =>
+    set((s) => ({ cart: s.cart.filter((l) => !(l.productId === productId && l.tier === tier)) })),
 
-  cartSummary: () => {
+  orders: ORDERS_SEED,
+  placeOrder: (customer, phone, deliverOn, window, payment) => {
     const s = get();
-    const byProduct = new Map<string, number>();
-    s.cart.forEach((c) => byProduct.set(c.productId, (byProduct.get(c.productId) ?? 0) + cartonsOf(c.tier, c.qty)));
-    const lines: CartLineDetail[] = s.cart.map((c) => {
-      const product = s.products.find((p) => p.id === c.productId)!;
-      const pack = product.packs.find((p) => p.tier === c.tier)!;
-      const lineTotal = pack.price * pack.units * c.qty;
-      const cartons = cartonsOf(c.tier, c.qty);
-      const rate = volumeRate(byProduct.get(c.productId) ?? 0);
-      const discount = lineTotal * rate;
-      return {
-        product, tier: c.tier, qty: c.qty, unitPrice: pack.price, packUnits: pack.units,
-        lineTotal, cartons, discount, afterDiscount: lineTotal - discount,
-      };
-    });
-    const subtotal = lines.reduce((t, l) => t + l.lineTotal, 0);
-    const volumeDiscount = lines.reduce((t, l) => t + l.discount, 0);
-    const deliveryFee = subtotal - volumeDiscount > 400 ? 0 : lines.length ? 14 : 0;
-    const issues: string[] = [];
-    byProduct.forEach((cartons, pid) => {
-      const p = s.products.find((x) => x.id === pid)!;
-      if (cartons < p.moqCartons) issues.push(`${p.name}: minimum order is ${p.moqCartons} cartons (you have ${Math.round(cartons * 10) / 10}).`);
-      if (cartons > p.stock) issues.push(`${p.name}: only ${p.stock} cartons in stock.`);
-    });
-    return {
-      lines, subtotal, volumeDiscount, deliveryFee,
-      total: Math.max(0, subtotal - volumeDiscount + deliveryFee),
-      issues, count: s.cart.reduce((n, c) => n + c.qty, 0),
-    };
-  },
-
-  placeOrder: ({ payment, deliveryDate, deliveryWindow, address }) => {
-    const s = get();
-    const sum = s.cartSummary();
-    if (sum.issues.length || !sum.lines.length) return null;
-    const kind: "B2B" | "B2C" = s.user.org ? "B2B" : "B2C";
+    const sum = cartSummary(s.cart, s.products);
     const order: Order = {
-      id: `o-${uid()}`, ref: `OW-${2419 + s.orders.length + 1}`,
-      customer: s.user.org ?? s.user.name, kind, placedAt: new Date().toISOString(),
-      items: sum.lines.map((l) => ({
-        productId: l.product.id, name: l.product.name, tier: l.tier, tierLabel: `${l.tier} · ${l.packUnits} packs`,
-        qty: l.qty, unitPrice: l.unitPrice, lineTotal: l.lineTotal,
-      })),
-      subtotal: Math.round(sum.subtotal * 100) / 100,
-      volumeDiscount: Math.round(sum.volumeDiscount * 100) / 100,
-      deliveryFee: sum.deliveryFee,
-      total: Math.round(sum.total * 100) / 100,
-      status: 0,
-      timeline: [{ stage: 0, at: new Date().toISOString() }],
-      payment, deliveryDate, deliveryWindow, address,
+      id: `OW-${2420 + s.orders.length}`,
+      customer, customerPhone: phone,
+      lines: [...s.cart],
+      subtotal: sum.subtotal, discount: sum.discount, deliveryFee: sum.deliveryFee, total: sum.total,
+      status: "pending", placedAt: todayKey(), deliverOn, window, payment,
     };
-    set({ orders: [order, ...s.orders], cart: [], checkoutOpen: false, cartOpen: false, view: "orders" });
-    get().log("Order placed", `${order.ref} · $${order.total.toFixed(2)}`, `${order.kind} · ${order.items.length} line(s) · ${payment.toUpperCase()}`, "info");
-    get().pushToast(`Order ${order.ref} placed — now in the baking queue`);
+    set({
+      orders: [order, ...s.orders],
+      cart: [], cartOpen: false, checkoutOpen: false,
+      products: s.products.map((p) => {
+        const used = order.lines
+          .filter((l) => l.productId === p.id)
+          .reduce((acc, l) => acc + cartonsOf(l.tier, l.qty), 0);
+        return used ? { ...p, stock: Math.max(0, p.stock - Math.round(used)) } : p;
+      }),
+    });
+    s.auditLog(s.user.name, s.user.role, "إنشاء طلب", `${order.id} لـ${customer} بإجمالي ${fmtMoney0(order.total)}`);
+    s.toast(`تم إنشاء الطلب ${order.id} بنجاح — سنتواصل معك للتأكيد`, "sage");
     return order;
   },
-
   advanceOrder: (id) => {
     const s = get();
-    const order = s.orders.find((o) => o.id === id);
-    if (!order || order.status >= 3) return;
-    const next = (order.status + 1) as OrderStatus;
-    set({
-      orders: s.orders.map((o) =>
-        o.id === id ? { ...o, status: next, timeline: [...o.timeline, { stage: next, at: new Date().toISOString() }] } : o
-      ),
-    });
-    get().log("Order stage advanced", `${order.ref} → ${ORDER_STAGES[next]}`, `${order.customer} · ${order.kind}`, "info");
-    get().pushToast(`${order.ref} moved to “${ORDER_STAGES[next]}”`);
+    const o = s.orders.find((x) => x.id === id)!;
+    if (o.status === "delivered") return;
+    const next = NEXT[o.status];
+    set({ orders: s.orders.map((x) => (x.id === id ? { ...x, status: next } : x)) });
+    s.auditLog(s.user.name, s.user.role, "تحديث حالة طلب", `${id} ← ${STATUS_AR[next]}`);
+    s.toast(`تحديث الطلب ${id}: ${STATUS_AR[next]}`, "brand");
   },
 
-  receiveStock: (rmId, qty) => {
+  raw: RAW_MATERIALS,
+  receiveStock: (id, qty) => {
     const s = get();
-    set({
-      rawMaterials: s.rawMaterials.map((r) =>
-        r.id === rmId ? { ...r, stock: r.stock + qty, lastDelivery: todayKey() } : r
-      ),
-    });
-    const rm = s.rawMaterials.find((r) => r.id === rmId);
-    get().log("Stock delivery received", `${rm?.name} +${qty.toLocaleString()} ${rm?.unit}`, `Supplier: ${rm?.supplier} · GRN-${Math.floor(1200 + Math.random() * 300)}`, "info");
-    get().pushToast(`Received ${qty.toLocaleString()} ${rm?.unit} of ${rm?.name}`);
+    const m = s.raw.find((x) => x.id === id)!;
+    set({ raw: s.raw.map((x) => (x.id === id ? { ...x, qty: Math.min(x.capacity, x.qty + qty) } : x)) });
+    s.auditLog(s.user.name, s.user.role, "استلام مواد خام", `${m.name} +${qty} ${m.unit} من ${m.supplier}`);
+    s.toast(`تم استلام ${qty} ${m.unit} من ${m.name}`, "sage");
   },
+  batches: BATCHES,
+
+  audit: AUDIT_SEED,
+  toasts: [],
+  toast: (msg, tone = "brand") => {
+    const id = toastSeq++;
+    set((s) => ({ toasts: [...s.toasts, { id, msg, tone }] }));
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4200);
+  },
+  auditLog: (actor, role, action, detail) => pushAudit(actor, role, action, detail),
 }));
 
-// apply persisted theme on boot
-document.documentElement.classList.toggle("dark", initialTheme === "dark");
+// أداة التدقيق — السجل ملحق فقط وغير قابل للتعديل أو الحذف
+export function pushAudit(actor: string, role: Role, action: string, detail: string) {
+  useStore.setState((s) => ({
+    audit: [{ id: `au-${auditSeq++}-${Date.now()}`, at: `${todayKey()} ${new Date().toTimeString().slice(0, 5)}`, actor, role, action, detail }, ...s.audit],
+  }));
+}
+
+export const deliveryMinDate = () => {
+  const d = addDays(new Date(), 2);
+  if (d.getDay() === 5) d.setDate(d.getDate() + 1); // لا توصيل يوم الجمعة
+  return dateKey(d);
+};

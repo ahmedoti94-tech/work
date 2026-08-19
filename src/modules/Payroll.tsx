@@ -1,289 +1,290 @@
 import { useMemo, useState } from "react";
+import {
+  computePayroll, downloadCSV, fmtDateShort, fmtMoney, fmtMoney0, monthKeyNow,
+  monthLabel, prevMonthKey, round2, todayKey, waLink,
+} from "../lib/payroll";
 import { useStore } from "../lib/store";
 import type { Employee, PayrollResult } from "../lib/types";
-import {
-  computePayroll, fmtMoney, fmtMoney0, monthKeyNow, monthLabel, OT_RATE,
-  prevMonthKey, SHIFTS, todayKey,
-} from "../lib/payroll";
-import { Avatar, Badge, Btn, Card, Field, Icon, inputCls, Modal, SectionHead } from "../components/ui";
+import { Avatar, Badge, Btn, Field, Icon, Modal, SectionHead, inputCls } from "../components/ui";
 
 export default function Payroll() {
-  const { employees, attendance, leaves, advances, finalizedMonths, finalizePayroll, user, grantAdvance, adjustSalary } = useStore();
-  const now = monthKeyNow();
-  const [month, setMonth] = useState(now);
+  const { employees, attendance, leaves, advances, finalizedMonths, finalizePayroll, addAdvance, adjustSalary, user, toast } = useStore();
+  const [month, setMonth] = useState(monthKeyNow());
   const [slip, setSlip] = useState<{ emp: Employee; res: PayrollResult } | null>(null);
-  const [advOpen, setAdvOpen] = useState(false);
-  const finalized = finalizedMonths.includes(month);
+  const [advEmp, setAdvEmp] = useState("e5");
+  const [advAmt, setAdvAmt] = useState("300");
+  const [advNote, setAdvNote] = useState("سلفة طارئة");
+  const [salaryEmp, setSalaryEmp] = useState<Employee | null>(null);
+  const [salaryVal, setSalaryVal] = useState("");
 
+  const active = employees.filter((e) => e.active);
   const results = useMemo(
-    () => employees.map((emp) => ({ emp, res: computePayroll(emp, month, attendance, leaves, advances) })),
-    [employees, month, attendance, leaves, advances]
+    () => active.map((emp) => ({ emp, res: computePayroll(emp, month, attendance, leaves, advances) })),
+    [active, month, attendance, leaves, advances]
   );
   const totals = useMemo(() => ({
-    net: results.reduce((s, r) => s + r.res.net, 0),
-    ot: results.reduce((s, r) => s + r.res.otPay, 0),
-    ded: results.reduce((s, r) => s + r.res.lateDeduction, 0),
-    adv: results.reduce((s, r) => s + r.res.advancesTotal, 0),
+    net: round2(results.reduce((s, r) => s + r.res.net, 0)),
+    ot: round2(results.reduce((s, r) => s + r.res.otPay, 0)),
+    ded: round2(results.reduce((s, r) => s + r.res.lateDeduction + r.res.advancesTotal, 0)),
   }), [results]);
 
-  const openAdvances = advances.filter((a) => !a.settledMonth);
-  const canManage = user.role === "hr" || user.role === "super_admin";
-  const isSuper = user.role === "super_admin";
+  const isCurrent = month === monthKeyNow();
+  const finalized = finalizedMonths.includes(month);
+  const months = [monthKeyNow(), prevMonthKey(monthKeyNow())];
+
+  const exportSheet = () => {
+    const rows: (string | number)[][] = [
+      [`مسير الرواتب — ${monthLabel(month)}`],
+      ["الاسم", "المسمى", "أيام الحضور", "الراتب الأساسي", "إضافي", "خصم تأخير", "سلف", "إجمالي الاستحقاق", "الصافي"],
+      ...results.map(({ emp, res }) => [
+        emp.name, emp.title, res.presentDays + res.paidLeaveDays, emp.baseSalary, res.otPay,
+        res.lateDeduction, res.advancesTotal, res.gross, res.net,
+      ]),
+      ["الإجمالي", "", "", "", totals.ot, "", "", "", totals.net],
+    ];
+    downloadCSV(`مسير-الرواتب-${month}.csv`, rows);
+    toast("تم تنزيل مسير الرواتب بصيغة Excel (CSV) جاهز للطباعة", "sage");
+  };
+
+  const sendSlipWhatsApp = (emp: Employee, res: PayrollResult) => {
+    const text =
+      `قسيمة راتب — ${monthLabel(month)}\nمصنع أوفنرايت للبسكويت\n\n` +
+      `الاسم: ${emp.name}\nالمسمى: ${emp.title}\n\n` +
+      `أيام الحضور: ${res.presentDays} من ${res.workDays}\n` +
+      `الراتب الأساسي: ${fmtMoney(res.baseEarned)}\n` +
+      `وقت إضافي: ${fmtMoney(res.otPay)}\n` +
+      `خصم تأخير: ${fmtMoney(res.lateDeduction)}\n` +
+      `سلف: ${fmtMoney(res.advancesTotal)}\n\n` +
+      `صافي الراتب: ${fmtMoney(res.net)}\n\nشكرًا لعطائك`;
+    window.open(waLink(emp.phone, text), "_blank");
+    toast(`جارٍ فتح واتساب لإرسال قسيمة ${emp.name} رقميًا`, "sage");
+  };
 
   return (
     <div>
-      {/* control strip */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="flex overflow-hidden rounded-lg border border-linestrong">
-          {[now, prevMonthKey(now)].map((m) => (
-            <button key={m} onClick={() => setMonth(m)}
-              className={`btn-press px-4 py-2 text-[12.5px] font-bold ${month === m ? "bg-ink text-bg dark:bg-cream dark:text-sunken" : "bg-surface text-mute hover:text-ink"}`}>
-              {monthLabel(m)}
-            </button>
-          ))}
-        </div>
-        {finalized ? (
-          <Badge tone="sage" className="py-1.5"><Icon name="check" size={13} /> Run finalized · payslips issued</Badge>
-        ) : month === now ? (
-          <Badge tone="butter" className="py-1.5"><Icon name="clock" size={13} /> Draft — month in progress</Badge>
-        ) : (
-          <Badge tone="mute" className="py-1.5">Historical preview</Badge>
-        )}
-        <div className="ml-auto flex gap-2">
-          {canManage && <Btn variant="outline" onClick={() => setAdvOpen(true)}><Icon name="plus" size={15} /> Record advance</Btn>}
-          {canManage && (
-            <Btn disabled={finalized || month !== now} onClick={() => finalizePayroll(month)}>
-              <Icon name="stamp" size={15} /> Finalize payroll run
+      <SectionHead
+        title="مسير الرواتب"
+        desc="حساب تلقائي: الأساسي ÷ أيام العمل × الحضور + إضافي ×١٫٥ − تأخير وسلف"
+        actions={
+          <>
+            <select value={month} onChange={(e) => setMonth(e.target.value)} className={`${inputCls} w-auto py-2 text-[13px] font-bold`}>
+              {months.map((m) => <option key={m} value={m}>{monthLabel(m)}{finalizedMonths.includes(m) ? " — معتمد" : ""}</option>)}
+            </select>
+            <Btn variant="outline" onClick={exportSheet}><Icon name="sheet" size={16} /> تصدير Excel / طباعة</Btn>
+            <Btn variant="sage" size="lg" disabled={!isCurrent || finalized} onClick={() => finalizePayroll(month)}>
+              <Icon name="stamp" size={17} /> حساب رواتب الشهر بنقرة واحدة
             </Btn>
+          </>
+        }
+      />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {finalized ? (
+          <Badge tone="sage" className="py-1.5"><Icon name="check" size={13} /> المسير معتمد — صدرت {results.length} قسيمة وسُوّيت السلف</Badge>
+        ) : isCurrent ? (
+          <Badge tone="butter" className="py-1.5"><Icon name="clock" size={13} /> مسودة — الشهر ما زال جارٍ، الأرقام تتحدث يوميًا</Badge>
+        ) : (
+          <Badge tone="mute" className="py-1.5">عرض تاريخي للشهر السابق</Badge>
+        )}
+        <span className="ms-auto text-[12.5px] font-bold text-mute">
+          صافي المسير: <b className="num text-ink">{fmtMoney0(totals.net)}</b> · إضافي <b className="num text-sage">{fmtMoney0(totals.ot)}</b> · استقطاعات <b className="num text-berry">{fmtMoney0(totals.ded)}</b>
+        </span>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="card overflow-hidden xl:col-span-2">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-[13px]">
+              <thead>
+                <tr className="border-b border-line text-[11px] font-bold text-mute">
+                  <th className="px-4 py-3 text-start">الموظف</th>
+                  <th className="px-3 py-3 text-start">الأساسي</th>
+                  <th className="px-3 py-3 text-start">حضور</th>
+                  <th className="px-3 py-3 text-start">إضافي</th>
+                  <th className="px-3 py-3 text-start">استقطاعات</th>
+                  <th className="px-3 py-3 text-start">الصافي</th>
+                  <th className="px-4 py-3 text-start">القسيمة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map(({ emp, res }) => (
+                  <tr key={emp.id} className="border-b border-line/60 last:border-0 hover:bg-raise/60">
+                    <td className="px-4 py-2.5">
+                      <span className="flex items-center gap-2.5">
+                        <Avatar name={emp.name} size={32} />
+                        <span className="leading-tight">
+                          <span className="block font-bold">{emp.name}</span>
+                          <span className="block text-[10.5px] text-mute">{emp.title}</span>
+                        </span>
+                      </span>
+                    </td>
+                    <td className="num px-3 py-2.5">{fmtMoney0(emp.baseSalary)}</td>
+                    <td className="num px-3 py-2.5">{res.presentDays + res.paidLeaveDays}<span className="text-mute">/{res.workDays}</span></td>
+                    <td className="num px-3 py-2.5 text-sage">{res.otPay > 0 ? `+${fmtMoney0(res.otPay)}` : "—"}</td>
+                    <td className="num px-3 py-2.5 text-berry">{res.lateDeduction + res.advancesTotal > 0 ? `−${fmtMoney0(res.lateDeduction + res.advancesTotal)}` : "—"}</td>
+                    <td className="num px-3 py-2.5 font-display text-[14px] font-bold">{fmtMoney0(res.net)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="flex gap-1.5">
+                        <Btn size="sm" variant="outline" onClick={() => setSlip({ emp, res })}><Icon name="printer" size={14} /> قسيمة</Btn>
+                        <Btn size="sm" variant="whatsapp" onClick={() => sendSlipWhatsApp(emp, res)} title="إرسال رقمي"><Icon name="whatsapp" size={14} /></Btn>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {/* السلف */}
+          <div className="card p-5">
+            <h3 className="font-display text-[15px] font-bold">نظام السلف والخصومات</h3>
+            <p className="mt-0.5 text-[11.5px] text-mute">تُسجَّل هنا وتُخصم تلقائيًا من مسير الشهر عند الاعتماد</p>
+            <div className="mt-3 space-y-3">
+              <Field label="الموظف">
+                <select className={inputCls} value={advEmp} onChange={(e) => setAdvEmp(e.target.value)}>
+                  {active.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="المبلغ (ر.س)"><input type="number" className={`${inputCls} num`} value={advAmt} onChange={(e) => setAdvAmt(e.target.value)} min={50} step={50} /></Field>
+                <Field label="السبب"><input className={inputCls} value={advNote} onChange={(e) => setAdvNote(e.target.value)} /></Field>
+              </div>
+              <Btn className="w-full" onClick={() => {
+                const amt = Number(advAmt);
+                if (!amt || amt < 50) { toast("أدخل مبلغًا صحيحًا (٥٠ ر.س فأكثر)", "berry"); return; }
+                addAdvance(advEmp, amt, advNote || "سلفة");
+              }}>
+                <Icon name="plus" size={15} /> تسجيل سلفة الآن
+              </Btn>
+            </div>
+            <div className="mt-4 border-t border-line pt-3">
+              <p className="label-xs mb-2">السلف المفتوحة هذا الشهر</p>
+              {advances.filter((a) => !a.settledMonth).length === 0 && <p className="text-[12px] font-semibold text-mute">لا توجد سلف مفتوحة</p>}
+              <div className="space-y-1.5">
+                {advances.filter((a) => !a.settledMonth).map((a) => {
+                  const emp = employees.find((e) => e.id === a.empId);
+                  return (
+                    <div key={a.id} className="flex items-center justify-between rounded-lg border border-line bg-raise px-3 py-2 text-[12px] font-semibold">
+                      <span>{emp?.name} <span className="text-mute">— {a.note}</span></span>
+                      <span className="num font-bold text-berry">{fmtMoney0(a.amount)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* تعديل راتب (مدير النظام فقط) */}
+          {user.role === "super" && (
+            <div className="card p-5">
+              <h3 className="flex items-center gap-2 font-display text-[15px] font-bold"><Icon name="shield" size={16} className="text-brand" /> تعديل راتب أساسي</h3>
+              <p className="mt-0.5 text-[11.5px] text-mute">صلاحية المدير العام فقط — يُسجَّل في التدقيق (رقابة مزدوجة موصى بها)</p>
+              <div className="mt-3 space-y-3">
+                <Field label="الموظف">
+                  <select className={inputCls} value={salaryEmp?.id ?? ""} onChange={(ev) => {
+                    const emp = employees.find((x) => x.id === ev.target.value) ?? null;
+                    setSalaryEmp(emp); setSalaryVal(emp ? String(emp.baseSalary) : "");
+                  }}>
+                    <option value="">اختر موظفًا…</option>
+                    {active.map((e) => <option key={e.id} value={e.id}>{e.name} — {fmtMoney0(e.baseSalary)}</option>)}
+                  </select>
+                </Field>
+                {salaryEmp && (
+                  <>
+                    <Field label="الراتب الجديد (ر.س)">
+                      <input type="number" className={`${inputCls} num`} value={salaryVal} onChange={(e) => setSalaryVal(e.target.value)} step={100} />
+                    </Field>
+                    <Btn className="w-full" variant="butter" onClick={() => {
+                      const v = Number(salaryVal);
+                      if (!v || v < 1000) { toast("أدخل راتبًا صحيحًا", "berry"); return; }
+                      adjustSalary(salaryEmp.id, v); setSalaryEmp(null);
+                    }}>
+                      <Icon name="edit" size={15} /> اعتماد التعديل
+                    </Btn>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* totals */}
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          { l: "Net payroll", v: fmtMoney0(totals.net), tone: "text-brand" },
-          { l: `Overtime paid ×${OT_RATE}`, v: fmtMoney0(totals.ot), tone: "text-sage" },
-          { l: "Late deductions", v: fmtMoney0(totals.ded), tone: "text-butter" },
-          { l: "Advances settled (سلف)", v: fmtMoney0(totals.adv), tone: "text-berry" },
-        ].map((t) => (
-          <Card key={t.l} className="p-4">
-            <p className="label-xs">{t.l}</p>
-            <p className={`num mt-1.5 font-display text-2xl font-bold ${t.tone}`}>{t.v}</p>
-          </Card>
-        ))}
-      </div>
+      {/* القسيمة */}
+      <Modal open={!!slip} onClose={() => setSlip(null)} title={`قسيمة راتب — ${slip ? monthLabel(slip.res.monthKey) : ""}`} wide>
+        {slip && (
+          <div id="print-area" className="rounded-xl border border-line bg-surface p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-display text-xl font-bold">أوفنرايت لصناعة البسكويت</p>
+                <p className="text-[12px] text-mute">المنطقة الصناعية الثانية — الرياض · س.ت 1010XXXXXX</p>
+              </div>
+              <span className="stamp-in rounded-lg border-2 border-brand px-3 py-1.5 font-display text-[13px] font-bold text-brand">
+                {finalizedMonths.includes(slip.res.monthKey) ? "معتمدة" : "مسودة"}
+              </span>
+            </div>
 
-      {/* payroll table */}
-      <Card className="p-4">
-        <SectionHead title="Payroll worksheet" sub={`Formula: (base ÷ work days) × days present + OT − late − unpaid leave − advances · click a row for the payslip`} />
-        <div className="overflow-x-auto rounded-lg border border-line">
-          <table className="w-full min-w-[760px] text-left text-[12.5px]">
-            <thead className="bg-raise text-[10.5px] uppercase tracking-[0.12em] text-mute">
-              <tr>
-                <th className="px-3 py-2.5 font-bold">Employee</th>
-                <th className="px-2 py-2.5 font-bold">Base</th>
-                <th className="px-2 py-2.5 font-bold">Days</th>
-                <th className="px-2 py-2.5 font-bold">OT hrs</th>
-                <th className="px-2 py-2.5 font-bold">Late min</th>
-                <th className="px-2 py-2.5 font-bold">Advance</th>
-                <th className="px-2 py-2.5 text-right font-bold">Net pay</th>
-                <th className="px-2 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {results.map(({ emp, res }) => (
-                <tr key={emp.id} onClick={() => setSlip({ emp, res })}
-                  className="cursor-pointer border-t border-line transition-colors hover:bg-brand/6">
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={emp.name} hue={emp.hue} size={28} />
-                      <div className="leading-tight">
-                        <p className="font-bold">{emp.name}</p>
-                        <p className="text-[10.5px] text-mute">{emp.title} · {SHIFTS[emp.shift].label}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="num px-2 py-2.5">{fmtMoney0(emp.baseSalary)}</td>
-                  <td className="num px-2 py-2.5">
-                    {res.presentDays + res.paidLeaveDays}<span className="text-mute">/{res.workDays}</span>
-                    {res.absentDays > 0 && <span className="ml-1 text-berry">·{res.absentDays}abs</span>}
-                  </td>
-                  <td className="num px-2 py-2.5 text-sage">{res.otHours.toFixed(1)}</td>
-                  <td className="num px-2 py-2.5 text-butter">{res.lateMinutes}</td>
-                  <td className="num px-2 py-2.5 text-berry">{res.advancesTotal ? fmtMoney0(res.advancesTotal) : "—"}</td>
-                  <td className="num px-2 py-2.5 text-right font-display text-[14px] font-bold">{fmtMoney(res.net)}</td>
-                  <td className="px-2 py-2.5 text-mute"><Icon name="arrow" size={14} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      {/* advances panel */}
-      <Card className="mt-4 p-4">
-        <SectionHead title="Open advances — السلف" sub="Deducted automatically in the next finalized payroll run, then settled" />
-        {openAdvances.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-linestrong px-4 py-6 text-center text-[13px] text-mute">No open advances. Every salfa has been settled. ✦</p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {openAdvances.map((a) => {
-              const emp = employees.find((e) => e.id === a.empId);
-              return (
-                <div key={a.id} className="flex items-center gap-3 rounded-lg border border-line bg-raise px-3 py-2.5">
-                  <Avatar name={emp?.name ?? "?"} hue={emp?.hue ?? 0} size={30} />
-                  <div className="min-w-0 flex-1 leading-tight">
-                    <p className="truncate text-[12.5px] font-bold">{emp?.name}</p>
-                    <p className="truncate text-[11px] text-mute">{a.note} · {a.date}</p>
-                  </div>
-                  <span className="num font-display text-[15px] font-bold text-berry">{fmtMoney0(a.amount)}</span>
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                ["الموظف", slip.emp.name], ["المسمى", slip.emp.title],
+                ["الشهر", monthLabel(slip.res.monthKey)], ["تاريخ الإصدار", fmtDateShort(todayKey())],
+              ].map(([l, v]) => (
+                <div key={l} className="rounded-lg border border-line bg-raise px-3 py-2">
+                  <p className="label-xs text-[9.5px]">{l}</p>
+                  <p className="mt-0.5 text-[12.5px] font-bold">{v}</p>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+
+            <div className="perf mt-6 pt-5">
+              <div className="grid gap-5 sm:grid-cols-2">
+                <div>
+                  <p className="label-xs mb-2">ملخص الحضور</p>
+                  {[
+                    ["أيام العمل في الشهر", String(slip.res.workDays)],
+                    ["أيام الحضور", String(slip.res.presentDays)],
+                    ["إجازة مدفوعة", String(slip.res.paidLeaveDays)],
+                    ["غياب", String(slip.res.absentDays)],
+                    ["وقت إضافي", `${slip.res.otHours} ساعة`],
+                    ["تأخير", `${slip.res.lateMinutes} دقيقة`],
+                  ].map(([l, v]) => (
+                    <div key={l} className="flex justify-between border-b border-dashed border-line py-1.5 text-[12.5px] font-semibold">
+                      <span className="text-mute">{l}</span><span className="num font-bold">{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <p className="label-xs mb-2">الاستحقاقات والاستقطاعات</p>
+                  {slip.res.rows.map((r) => (
+                    <div key={r.label} className="flex justify-between border-b border-dashed border-line py-1.5 text-[12.5px] font-semibold">
+                      <span className="text-mute">{r.label}</span>
+                      <span className={`num font-bold ${r.kind === "earn" ? "text-sage" : "text-berry"}`}>
+                        {r.value >= 0 ? "+" : "−"}{fmtMoney(Math.abs(r.value))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between rounded-xl border-2 border-brand/40 bg-brand/6 px-4 py-3">
+              <span className="font-display text-[15px] font-bold">صافي الراتب المستحق</span>
+              <span className="num font-display text-2xl font-bold text-brand">{fmtMoney(slip.res.net)}</span>
+            </div>
+
+            <p className="mt-4 text-center text-[10.5px] text-mute">
+              أُصدرت إلكترونيًا من نظام أوفنرايت — للاستفسار تواصل مع الموارد البشرية · وثيقة {finalizedMonths.includes(slip.res.monthKey) ? "نهائية" : "مبدئية"}
+            </p>
           </div>
         )}
-      </Card>
-
-      <AdvanceModal open={advOpen} onClose={() => setAdvOpen(false)} onSave={(e, amt, note) => { grantAdvance(e, amt, note); setAdvOpen(false); }} />
-
-      {/* payslip */}
-      <Modal open={!!slip} onClose={() => setSlip(null)} title={slip ? `Payslip — ${slip.emp.name}` : ""} wide
-        footer={slip && (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {isSuper ? (
-              <div className="flex items-center gap-1.5">
-                <span className="label-xs mr-1">Adjust base (audit-logged)</span>
-                {[-50, -10, +10, +50].map((d) => (
-                  <Btn key={d} size="sm" variant={d > 0 ? "sage" : "berry"} onClick={() => adjustSalary(slip.emp.id, d)}>
-                    {d > 0 ? `+${d}` : d}
-                  </Btn>
-                ))}
-              </div>
-            ) : <span className="label-xs">Read-only · salary adjustments require Super Admin</span>}
-            <Btn onClick={() => window.print()}><Icon name="printer" size={15} /> Export PDF</Btn>
-          </div>
-        )}>
-        {slip && <Payslip emp={slip.emp} res={slip.res} />}
+        <div className="no-print mt-4 flex flex-wrap justify-end gap-2">
+          <Btn variant="whatsapp" onClick={() => slip && sendSlipWhatsApp(slip.emp, slip.res)}>
+            <Icon name="whatsapp" size={16} /> إرسال واتساب للموظف
+          </Btn>
+          <Btn onClick={() => window.print()}><Icon name="printer" size={16} /> طباعة / حفظ PDF</Btn>
+        </div>
       </Modal>
     </div>
-  );
-}
-
-function Payslip({ emp, res }: { emp: Employee; res: PayrollResult }) {
-  return (
-    <div id="print-area" className="rounded-xl border border-line bg-cream p-5 text-[#241609] dark:bg-cream dark:text-[#241609]">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#c0761f] text-[#fff8ea]">
-            <Icon name="logo" size={26} sw={1.6} />
-          </span>
-          <div>
-            <p className="font-display text-lg font-extrabold leading-tight">Ovenwright Biscuit Works</p>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8a7355]">Employee payslip · {monthLabel(res.monthKey)}</p>
-          </div>
-        </div>
-        <div className="num text-right text-[11px] leading-relaxed text-[#8a7355]">
-          Slip ID OW-{res.empId.toUpperCase()}-{res.monthKey.replace("-", "")}<br />
-          Issued {todayKey()}<br />Plant #1 · 6th of October City
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-lg bg-[#f4ecdd] p-3.5 text-[12px] sm:grid-cols-4">
-        {[
-          ["Employee", emp.name], ["Badge", emp.code], ["Title", emp.title],
-          ["Department", emp.dept], ["Shift", `${SHIFTS[emp.shift].label} (${SHIFTS[emp.shift].window})`],
-          ["Base salary", fmtMoney(emp.baseSalary)], ["Daily rate", fmtMoney(res.perDay)], ["Hourly", fmtMoney(res.hourly)],
-        ].map(([k, v]) => (
-          <div key={k}><p className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-[#8a7355]">{k}</p><p className="num font-bold">{v}</p></div>
-        ))}
-      </div>
-
-      <div className="perf mt-6 pt-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <p className="label-xs mb-2 text-[#8a7355]">Attendance summary</p>
-            <div className="space-y-1 text-[12.5px]">
-              {[
-                ["Work days in month", `${res.workDays}`], ["Days present", `${res.presentDays}`],
-                ["Paid leave days", `${res.paidLeaveDays}`], ["Unpaid leave days", `${res.unpaidLeaveDays}`],
-                ["Unexcused absences", `${res.absentDays}`], ["Overtime hours", `${res.otHours.toFixed(1)}`],
-                ["Late minutes", `${res.lateMinutes}`],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between border-b border-dashed border-[#e0d2b6] py-1"><span>{k}</span><span className="num font-bold">{v}</span></div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="label-xs mb-2 text-[#8a7355]">Earnings & deductions</p>
-            <div className="space-y-1 text-[12.5px]">
-              {res.rows.map((r) => (
-                <div key={r.label}>
-                  <div className="flex justify-between py-1">
-                    <span>{r.label}</span>
-                    <span className={`num font-bold ${r.kind === "deduct" ? "text-[#b0432a]" : "text-[#241609]"}`}>
-                      {r.value < 0 ? `(${fmtMoney(Math.abs(r.value))})` : fmtMoney(r.value)}
-                    </span>
-                  </div>
-                  <p className="-mt-1 pb-1 text-[10.5px] text-[#8a7355]">{r.sub}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex items-end justify-between rounded-lg bg-[#241609] px-4 py-3 text-[#f4ecdd]">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#c9b58d]">Net pay</p>
-            <p className="num font-display text-3xl font-extrabold">{fmtMoney(res.net)}</p>
-          </div>
-          <div className="num text-right text-[10.5px] leading-relaxed text-[#c9b58d]">
-            Gross {fmtMoney(res.gross)}<br />Deductions {fmtMoney(res.lateDeduction + res.advancesTotal)}<br />Paid via bank transfer · Day 1
-          </div>
-        </div>
-
-        <div className="mt-5 flex items-end justify-between text-[11px] text-[#8a7355]">
-          <div className="w-40 border-t border-dashed border-[#8a7355] pt-1 text-center">HR Manager</div>
-          <div className="w-40 border-t border-dashed border-[#8a7355] pt-1 text-center">Employee signature</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdvanceModal({ open, onClose, onSave }: {
-  open: boolean; onClose: () => void; onSave: (empId: string, amount: number, note: string) => void;
-}) {
-  const { employees } = useStore();
-  const [empId, setEmpId] = useState(employees[0].id);
-  const [amount, setAmount] = useState(100);
-  const [note, setNote] = useState("Emergency advance");
-  return (
-    <Modal open={open} onClose={onClose} title="Record salary advance (سلفة)"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn disabled={amount <= 0} onClick={() => onSave(empId, amount, note)}>
-            <Icon name="check" size={15} /> Record {fmtMoney0(amount)}
-          </Btn>
-        </div>
-      }>
-      <div className="space-y-4">
-        <Field label="Employee">
-          <select className={inputCls} value={empId} onChange={(e) => setEmpId(e.target.value)}>
-            {employees.map((e) => <option key={e.id} value={e.id}>{e.name} · net base {fmtMoney0(e.baseSalary)}</option>)}
-          </select>
-        </Field>
-        <Field label="Amount (USD)">
-          <input type="number" min={10} step={10} className={`${inputCls} num`} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
-        </Field>
-        <Field label="Reason note (written to audit trail)">
-          <input className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} />
-        </Field>
-        <p className="rounded-lg border border-line bg-raise px-3 py-2 text-[11.5px] leading-snug text-mute">
-          The advance is deducted from the employee's net pay when the current payroll run is finalized, then marked settled — no double deduction is possible.
-        </p>
-      </div>
-    </Modal>
   );
 }
