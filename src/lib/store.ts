@@ -12,6 +12,7 @@ import {
   addDays, cartonsOf, computePayroll, dateKey, dayStats, fmtMin, fmtMoney0,
   monthKeyNow, monthLabel, nowMin, round2, todayKey, volumeRate,
 } from "./payroll";
+import { chainHash } from "./crypto";
 
 export type ToastTone = "sage" | "brand" | "berry" | "butter";
 export interface Toast { id: number; msg: string; tone: ToastTone }
@@ -108,6 +109,17 @@ interface State {
   toasts: Toast[];
   toast: (msg: string, tone?: ToastTone) => void;
   auditLog: (actor: string, role: Role, action: string, detail: string) => void;
+
+  // محرك التوصيات — سلوك التصفح
+  productViews: Record<string, number>;
+  trackView: (productId: string) => void;
+
+  // عدّادات أمنية (محاكاة Redis rate-limiter)
+  security: { scans: number; blocked: number };
+  recordScan: (blocked: boolean) => void;
+
+  // وسم جغرافي لسجلات الحضور الممسوحة
+  tagGps: (empId: string, gps: string) => void;
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -352,14 +364,52 @@ export const useStore = create<State>((set, get) => ({
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4200);
   },
   auditLog: (actor, role, action, detail) => pushAudit(actor, role, action, detail),
+
+  productViews: {},
+  trackView: (productId) =>
+    set((s) => ({ productViews: { ...s.productViews, [productId]: (s.productViews[productId] ?? 0) + 1 } })),
+
+  security: { scans: 0, blocked: 0 },
+  recordScan: (blocked) =>
+    set((s) => ({
+      security: { scans: s.security.scans + 1, blocked: s.security.blocked + (blocked ? 1 : 0) },
+    })),
+
+  tagGps: (empId, gps) => {
+    const date = todayKey();
+    set((s) => ({
+      attendance: s.attendance.map((a) =>
+        a.empId === empId && a.date === date && !a.gps ? { ...a, gps } : a
+      ),
+    }));
+  },
 }));
 
-// أداة التدقيق — السجل ملحق فقط وغير قابل للتعديل أو الحذف
+// أداة التدقيق — سلسلة تجزئة ملحق-فقط: كل حدث يحمل بصمة الحدث الذي قبله،
+// فأي تعديل لاحق يكسر السلسلة ويظهر فورًا في «التحقق من سلامة السلسلة»
 export function pushAudit(actor: string, role: Role, action: string, detail: string) {
-  useStore.setState((s) => ({
-    audit: [{ id: `au-${auditSeq++}-${Date.now()}`, at: `${todayKey()} ${new Date().toTimeString().slice(0, 5)}`, actor, role, action, detail }, ...s.audit],
-  }));
+  useStore.setState((s) => {
+    const prevHash = s.audit[0]?.hash ?? "GENESIS";
+    const at = `${todayKey()} ${new Date().toTimeString().slice(0, 5)}`;
+    const entry: AuditEntry = {
+      id: `au-${auditSeq++}-${Date.now()}`, at, actor, role, action, detail,
+      prevHash, hash: chainHash(prevHash, at, actor, action, detail),
+    };
+    return { audit: [entry, ...s.audit] };
+  });
 }
+
+export const verifyAuditChain = (entries: AuditEntry[]) => {
+  // إعادة بناء السلسلة زمنيًا والتحقق من كل وصلة
+  const chrono = [...entries].reverse();
+  let prev = "GENESIS";
+  for (const e of chrono) {
+    if (e.prevHash !== prev) return { ok: false, brokenAt: e.id };
+    if (e.hash !== chainHash(prev, e.at, e.actor, e.action, e.detail)) return { ok: false, brokenAt: e.id };
+    prev = e.hash;
+  }
+  return { ok: true, brokenAt: null as string | null };
+};
 
 export const deliveryMinDate = () => {
   const d = addDays(new Date(), 2);

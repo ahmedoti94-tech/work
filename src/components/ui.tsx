@@ -97,6 +97,9 @@ const PATHS = {
   wifiOff: (<><path d="m4 4 16 16" /><path d="M6.5 9.5A13 13 0 0 1 10 7.8M14.5 8c2 .6 3.6 1.7 5 3M9 13a8 8 0 0 1 3-1.5M15.5 13.6c.6.4 1.2.8 1.7 1.4M12 17.5h.01" /></>),
   sheet: (<><rect x="4" y="3.5" width="16" height="17" rx="1.5" /><path d="M4 9h16M4 14.5h16M10 3.5v17" /></>),
   kiosk: (<><rect x="5" y="3.5" width="14" height="12" rx="1.5" /><path d="M12 15.5v3M8 20.5h8" /><circle cx="12" cy="9.5" r="2.6" /></>),
+  spark: (<><path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.5l-1.8-5.9L4.5 10.8 10.2 9 12 3.5Z" /><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6Z" /></>),
+  idcard: (<><rect x="3" y="5" width="18" height="14.5" rx="2" /><circle cx="8.3" cy="11" r="2" /><path d="M5.5 16.5c.5-1.7 1.5-2.6 2.8-2.6s2.3.9 2.8 2.6" /><path d="M14 9.5h4.5M14 12.5h4.5M14 15.5h2.5" /></>),
+  scan: (<><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" /><path d="M4 12h16" /></>),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;
@@ -237,6 +240,27 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 
 export const inputCls =
   "w-full rounded-lg border border-linestrong bg-surface px-3 py-2 text-[13.5px] font-semibold outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-brand/20 placeholder:font-normal placeholder:text-mute/70";
+
+// ─── هيكل تحميل (Skeleton) ───────────────────────────────────────────────────
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`shimmer rounded-lg border border-line bg-raise ${className}`} />;
+}
+
+export function ProductCardSkeleton() {
+  return (
+    <div className="card overflow-hidden rounded-xl">
+      <Skeleton className="aspect-square w-full rounded-none border-0" />
+      <div className="space-y-2.5 p-3.5">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+        <div className="flex items-center justify-between pt-1">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-8 w-20 rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── التنبيهات العائمة ──────────────────────────────────────────────────────
 export function ToastHost() {

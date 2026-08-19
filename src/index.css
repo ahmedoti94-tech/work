@@ -167,6 +167,29 @@ body {
 @keyframes ow-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .pop { animation: ow-pop 260ms cubic-bezier(0.2, 0.9, 0.3, 1.4) both; }
 
+/* وميض الماسح الأمني — أخضر نجاح / أحمر رفض */
+@keyframes ow-flash { 0% { opacity: 0.85; } 100% { opacity: 0; } }
+.flash-overlay { animation: ow-flash 620ms ease-out both; pointer-events: none; }
+
+/* إمالة البطاقة ثلاثية الأبعاد */
+.tilt { transform-style: preserve-3d; transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1); will-change: transform; }
+.tilt-inner { transform: translateZ(26px); }
+
+/* شريط الباركود على بطاقة العمل */
+.barcode {
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0 2px, transparent 2px 4px,
+    currentColor 4px 5px, transparent 5px 9px,
+    currentColor 9px 12px, transparent 12px 14px,
+    currentColor 14px 15px, transparent 15px 19px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
 /* ---------- print (تصدير قسيمة الراتب PDF) ---------- */
 @media print {
   * {

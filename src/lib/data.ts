@@ -3,6 +3,7 @@ import type {
   Order, Product, RawMaterial, User,
 } from "./types";
 import { addDays, dateKey, isWorkday, monthKeyOf, prevMonthKey, todayKey } from "./payroll";
+import { chainHash } from "./crypto";
 
 // ─── الهويات (RBAC) ─────────────────────────────────────────────────────────
 export const USERS: User[] = [
@@ -93,6 +94,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 11.2, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 5, stock: 640, rating: 4.9, badge: "الأكثر مبيعًا", soldRank: 1,
+    notes: ["زبدة فرنسية", "مقرمش", "كلاسيكي"],
   },
   {
     id: "p2", name: "كوكيز الشوكولاتة الفاخر", latinName: "Choco Chunk Cookies", flavor: "شوكولاتة داكنة", family: "شوكولاتة", weight: "18 قطعة × 25غ",
@@ -105,6 +107,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 13, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 5, stock: 420, rating: 4.8, soldRank: 2,
+    notes: ["شوكولاتة داكنة", "قطع غنية", "مقرمش"],
   },
   {
     id: "p3", name: "السمسمية المقرمشة", latinName: "Sesame Snaps", flavor: "سمسم محمّص", family: "سمسم", weight: "30 قطعة × 12غ",
@@ -117,6 +120,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 8, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 10, stock: 880, rating: 4.7, badge: "تراثي", soldRank: 3,
+    notes: ["سمسم محمّص", "قرمشة", "تقليدي"],
   },
   {
     id: "p4", name: "معمول التمر الملكي", latinName: "Royal Date Maamoul", flavor: "عجوة تمر", family: "تمر", weight: "20 قطعة × 30غ",
@@ -129,6 +133,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 15, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 5, stock: 300, rating: 4.9, badge: "موسمي", soldRank: 4,
+    notes: ["عجوة فاخرة", "تقليدي", "مناسبات"], seasonal: "رمضان والعيد",
   },
   {
     id: "p5", name: "بسكويت الشوفان بالعسل", latinName: "Oat & Honey Digestive", flavor: "شوفان وعسل", family: "شوفان", weight: "22 قطعة × 18غ",
@@ -141,6 +146,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 9.8, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 5, stock: 510, rating: 4.6, badge: "صحي", soldRank: 5,
+    notes: ["شوفان كامل", "عسل", "صحي"],
   },
   {
     id: "p6", name: "ويفر الفانيليا الهش", latinName: "Vanilla Wafer Rolls", flavor: "كريمة فانيليا", family: "فانيليا", weight: "26 قطعة × 10غ",
@@ -153,6 +159,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 7.4, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 10, stock: 96, rating: 4.4, soldRank: 7,
+    notes: ["فانيليا", "طبقات", "خفيف"],
   },
   {
     id: "p7", name: "مقرمشات جوز الهند", latinName: "Coconut Crisp", flavor: "جوز هند محمّص", family: "جوز هند", weight: "28 قطعة × 11غ",
@@ -165,6 +172,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 9, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 10, stock: 260, rating: 4.5, soldRank: 6,
+    notes: ["جوز هند", "قرمشة", "استوائي"], seasonal: "الصيف",
   },
   {
     id: "p8", name: "أصابع الليمون المنعشة", latinName: "Lemon Shortbread Fingers", flavor: "ليمون وجلّاز", family: "حمضيات", weight: "20 قطعة × 15غ",
@@ -177,6 +185,7 @@ export const PRODUCTS: Product[] = [
       { tier: "pallet", units: 60, price: 10.5, label: "طبالية — ٦٠ كرتونة" },
     ],
     moqCartons: 5, stock: 180, rating: 4.6, badge: "جديد", soldRank: 8,
+    notes: ["ليمون منعش", "جلّاز", "خفيف"], seasonal: "الصيف",
   },
 ];
 
@@ -238,17 +247,28 @@ export const ORDERS_SEED: Order[] = [
   },
 ];
 
-// ─── سجل التدقيق ────────────────────────────────────────────────────────────
-export const AUDIT_SEED: AuditEntry[] = [
-  { id: "au1", at: dateKey(addDays(t0, -1)) + " 09:14", actor: "منيرة السالم", role: "hr", action: "اعتماد مسير رواتب", detail: `اعتماد مسير ${prevMonthKey(monthKeyOf(t0))} وإصدار ١١ قسيمة راتب` },
-  { id: "au2", at: dateKey(addDays(t0, -1)) + " 07:02", actor: "سعد الحربي", role: "production", action: "استلام مواد خام", detail: "استلام ٦٠ كيس دقيق قمح من مطاحن الراجحي" },
-  { id: "au3", at: dateKey(addDays(t0, -1)) + " 11:40", actor: "يزيد العتيبي", role: "sales", action: "تحديث حالة طلب", detail: "OW-2417 ← تم الشحن إلى بقالة الخير" },
-  { id: "au4", at: dateKey(addDays(t0, -2)) + " 13:25", actor: "عبدالله الراشد", role: "super", action: "تعديل راتب أساسي", detail: "تعديل راتب نورة القحطاني إلى 3,800 ر.س (مراجعة أداء)" },
-  { id: "au5", at: dateKey(addDays(t0, -2)) + " 08:51", actor: "منيرة السالم", role: "hr", action: "تسجيل سلفة", detail: "سلفة ٤٠٠ ر.س لنورة القحطاني — ستُخصم من مسير الشهر" },
-  { id: "au6", at: dateKey(addDays(t0, -3)) + " 16:10", actor: "أحمد الغامدي", role: "customer", action: "إدخال حضور يدوي", detail: "إدخال يدوي بواسطة المشرف ليوسف الزهراني (تعطل قارئ البadge)" },
-  { id: "au7", at: dateKey(addDays(t0, -4)) + " 10:33", actor: "سعد الحربي", role: "production", action: "تنبيه صلاحية", detail: "LOT-0239 (أصابع الليمون) يدخل نافذة التنبيه قبل الانتهاء" },
-  { id: "au8", at: dateKey(addDays(t0, -5)) + " 12:18", actor: "عبدالله الراشد", role: "super", action: "إنشاء طلب جملة", detail: "OW-2416 لفندق القصر الذهبي — ٢٥ كرتونة، خصم ٥٪" },
+// ─── سجل التدقيق (سلسلة تجزئة غير قابلة للعبث) ──────────────────────────────
+const AUDIT_RAW = [
+  { id: "au1", at: dateKey(addDays(t0, -1)) + " 09:14", actor: "منيرة السالم", role: "hr" as const, action: "اعتماد مسير رواتب", detail: `اعتماد مسير ${prevMonthKey(monthKeyOf(t0))} وإصدار ١١ قسيمة راتب` },
+  { id: "au2", at: dateKey(addDays(t0, -1)) + " 07:02", actor: "سعد الحربي", role: "production" as const, action: "استلام مواد خام", detail: "استلام ٦٠ كيس دقيق قمح من مطاحن الراجحي" },
+  { id: "au3", at: dateKey(addDays(t0, -1)) + " 11:40", actor: "يزيد العتيبي", role: "sales" as const, action: "تحديث حالة طلب", detail: "OW-2417 ← تم الشحن إلى بقالة الخير" },
+  { id: "au4", at: dateKey(addDays(t0, -2)) + " 13:25", actor: "عبدالله الراشد", role: "super" as const, action: "تعديل راتب أساسي", detail: "تعديل راتب نورة القحطاني إلى 3,800 ر.س (مراجعة أداء)" },
+  { id: "au5", at: dateKey(addDays(t0, -2)) + " 08:51", actor: "منيرة السالم", role: "hr" as const, action: "تسجيل سلفة", detail: "سلفة ٤٠٠ ر.س لنورة القحطاني — ستُخصم من مسير الشهر" },
+  { id: "au6", at: dateKey(addDays(t0, -3)) + " 16:10", actor: "أحمد الغامدي", role: "customer" as const, action: "إدخال حضور يدوي", detail: "إدخال يدوي بواسطة المشرف ليوسف الزهراني (تعطل قارئ الباركود)" },
+  { id: "au7", at: dateKey(addDays(t0, -4)) + " 10:33", actor: "سعد الحربي", role: "production" as const, action: "تنبيه صلاحية", detail: "LOT-0239 (أصابع الليمون) يدخل نافذة التنبيه قبل الانتهاء" },
+  { id: "au8", at: dateKey(addDays(t0, -5)) + " 12:18", actor: "عبدالله الراشد", role: "super" as const, action: "إنشاء طلب جملة", detail: "OW-2416 لفندق القصر الذهبي — ٢٥ كرتونة، خصم ٥٪" },
 ];
+// السلسلة تُبنى زمنيًا (الأقدم ← الأحدث) ثم تُعرض بالأحدث أولًا
+export const AUDIT_SEED: AuditEntry[] = (() => {
+  let prev = "GENESIS";
+  const chained = [...AUDIT_RAW].reverse().map((e) => {
+    const hash = chainHash(prev, e.at, e.actor, e.action, e.detail);
+    const out: AuditEntry = { ...e, prevHash: prev, hash };
+    prev = hash;
+    return out;
+  });
+  return chained.reverse();
+})();
 
 // ─── سلسلة الإيرادات (١٢ شهرًا) ──────────────────────────────────────────────
 export const REVENUE_SERIES = [

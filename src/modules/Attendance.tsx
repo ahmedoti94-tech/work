@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { SUPERVISOR_PHONE } from "../lib/data";
 import {
   GRACE_MIN, OT_RATE, SHIFTS, dayStats, downloadCSV, fmtClock, fmtDateShort,
   fmtDur, fmtMin, pad2, todayKey, waLink, WEEKDAYS_AR, addDays, dateKey,
 } from "../lib/payroll";
+import {
+  BADGE_TTL_SEC, FACTORY_GEO, beep, geoTag, issueBadge, qrCells, verifyBadge,
+} from "../lib/crypto";
 import { useStore } from "../lib/store";
-import type { AttendanceRecord } from "../lib/types";
+import type { AttendanceRecord, Employee } from "../lib/types";
 import { Avatar, Badge, Btn, Field, Icon, Modal, SectionHead, inputCls, type BadgeTone } from "../components/ui";
 
 function statusOf(rec: AttendanceRecord | undefined, shift: keyof typeof SHIFTS): { label: string; tone: BadgeTone } {
@@ -18,7 +21,7 @@ function statusOf(rec: AttendanceRecord | undefined, shift: keyof typeof SHIFTS)
 }
 
 export default function Attendance() {
-  const { employees, attendance, punch, manualPunch, user, toast, offlineQueue, online } = useStore();
+  const { employees, attendance, punch, manualPunch, user, toast, offlineQueue, online, recordScan, tagGps, security, auditLog } = useStore();
   const [clock, setClock] = useState(new Date());
   const [stamp, setStamp] = useState<{ type: "in" | "out"; t: string } | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -26,10 +29,26 @@ export default function Attendance() {
   const [mIn, setMIn] = useState("06:05");
   const [mOut, setMOut] = useState("");
   const [kiosk, setKiosk] = useState(false);
+  // الماسح الأمني
+  const [flash, setFlash] = useState<"ok" | "err" | null>(null);
+  const [tokenIn, setTokenIn] = useState("");
+  const [geoOn, setGeoOn] = useState(true);
+  const [distance, setDistance] = useState(40);
+  const [scanResult, setScanResult] = useState<{ ok: boolean; msg: string; name?: string } | null>(null);
+  const [idCard, setIdCard] = useState<Employee | null>(null);
+  const [cardEmp, setCardEmp] = useState("e5");
+  const attemptsRef = useRef<Record<string, number[]>>({});
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // فتح الكشك من رصيف الإجراءات السريعة
+  useEffect(() => {
+    const h = () => setKiosk(true);
+    window.addEventListener("ow-open-kiosk", h);
+    return () => window.removeEventListener("ow-open-kiosk", h);
   }, []);
 
   const date = todayKey();
@@ -61,6 +80,51 @@ export default function Attendance() {
       setScanning(false);
       doPunch(myRec?.in == null ? "in" : "out");
     }, 900);
+  };
+
+  /* ── خط التحقق الأمني: HMAC → صلاحية → سياج جغرافي → حد المعدل → بصمة ── */
+  const reject = (msg: string) => {
+    setFlash("err"); beep("err"); recordScan(true);
+    setScanResult({ ok: false, msg });
+    auditLog(user.name, user.role, "رفض مسح أمني", msg);
+  };
+
+  const runScan = async (raw: string) => {
+    const check = await verifyBadge(raw);
+    if (!check.ok || !check.empId) { reject(check.reason ?? "رمز غير صالح"); return; }
+    const emp = employees.find((e) => e.id === check.empId);
+    if (!emp || !emp.active) { reject("الموظف غير موجود أو موقوف"); return; }
+
+    if (geoOn && distance > FACTORY_GEO.radiusM) {
+      reject(`${emp.name} خارج السياج الجغرافي (على بُعد ${distance} م — الحد ${FACTORY_GEO.radiusM} م)`);
+      return;
+    }
+
+    const now = Date.now();
+    const win = (attemptsRef.current[emp.id] ?? []).filter((t) => now - t < 60_000);
+    if (win.length >= 3) {
+      reject(`تجاوز حد المسح لـ${emp.name} (٣ محاولات/دقيقة) — أوقفه مُحدّد المعدل`);
+      return;
+    }
+    attemptsRef.current[emp.id] = [...win, now];
+
+    const today = todayKey();
+    const rec = attendance.find((a) => a.empId === emp.id && a.date === today);
+    const type: "in" | "out" = rec?.in == null ? "in" : "out";
+    const res = punch(emp.id, type);
+    if (res && type === "in" && rec?.in == null) tagGps(emp.id, geoTag(distance));
+    setFlash("ok"); beep("ok"); recordScan(false);
+    setScanResult({ ok: true, name: emp.name, msg: type === "in" ? `تم تسجيل حضور ${emp.name} — وميض أخضر ونغمة نجاح` : `تم تسجيل انصراف ${emp.name}` });
+  };
+
+  const simulateSecureScan = async (empId: string) => {
+    const token = await issueBadge(empId); // توقيع HMAC حقيقي ثم تحقق كامل
+    void runScan(token.raw);
+  };
+
+  const simulateForged = () => {
+    // توقيع مكسور عمدًا — يجب أن يرفضه فحص HMAC
+    void runScan(`OW1.e5.${Date.now() + 60000}.${"0".repeat(64)}`);
   };
 
   const sendWhatsAppSummary = () => {

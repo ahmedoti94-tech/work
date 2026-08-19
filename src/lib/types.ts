@@ -31,6 +31,7 @@ export interface AttendanceRecord {
   out: number | null;
   method: "qr" | "manual";
   bySupervisor?: boolean;
+  gps?: string;
 }
 
 export type LeaveType = "sick" | "annual" | "unpaid" | "permission";
@@ -107,6 +108,8 @@ export interface Product {
   rating: number;
   badge?: string;
   soldRank: number;
+  notes: string[];
+  seasonal?: string;
 }
 
 export interface CartLine {
@@ -160,6 +163,8 @@ export interface AuditEntry {
   role: Role;
   action: string;
   detail: string;
+  prevHash: string;
+  hash: string;
 }
 
 export interface OfflinePunch {
