@@ -165,6 +165,25 @@ export interface AuditEntry {
   detail: string;
   prevHash: string;
   hash: string;
+  ip?: string;
+  agent?: string;
+}
+
+export type ThreatKind = "nosql" | "xss" | "brute" | "forgery" | "geo" | "csrf";
+
+export interface ThreatEvent {
+  id: string;
+  at: string;
+  kind: ThreatKind;
+  ip: string;
+  detail: string;
+  action: string;
+}
+
+export interface RefreshRotation {
+  id: string;
+  at: string;
+  ip: string;
 }
 
 export interface OfflinePunch {
@@ -182,4 +201,5 @@ export type View =
   | "marketplace"
   | "orders"
   | "inventory"
+  | "security"
   | "system";

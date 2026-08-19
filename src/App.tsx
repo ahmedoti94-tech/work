@@ -11,6 +11,7 @@ import Marketplace from "./modules/Marketplace";
 import Checkout from "./modules/Checkout";
 import Orders from "./modules/Orders";
 import Inventory from "./modules/Inventory";
+import Security from "./modules/Security";
 import System from "./modules/System";
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
     marketplace: <Marketplace />,
     orders: <Orders />,
     inventory: <Inventory />,
+    security: <Security />,
     system: <System />,
   };
 

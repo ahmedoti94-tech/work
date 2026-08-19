@@ -391,9 +391,14 @@ export function pushAudit(actor: string, role: Role, action: string, detail: str
   useStore.setState((s) => {
     const prevHash = s.audit[0]?.hash ?? "GENESIS";
     const at = `${todayKey()} ${new Date().toTimeString().slice(0, 5)}`;
+    // بصمة IP + وكيل المتصفح تُشتق حتميًا من الفاعل (محاكاة تسجيل الخادم الحقيقي)
+    const h = chainHash(actor, role, "ip", "agent", "seed");
+    const ip = `10.24.${parseInt(h.slice(0, 2), 16) % 200}.${parseInt(h.slice(2, 4), 16) % 250}`;
+    const agents = ["Chrome/Android · بوابة المصنع", "Safari/iOS · تطبيق الجوال", "Edge/Windows · مكتب HR", "Firefox/Linux · غرفة الخوادم"];
+    const agent = agents[parseInt(h.slice(4, 6), 16) % agents.length];
     const entry: AuditEntry = {
       id: `au-${auditSeq++}-${Date.now()}`, at, actor, role, action, detail,
-      prevHash, hash: chainHash(prevHash, at, actor, action, detail),
+      prevHash, hash: chainHash(prevHash, at, actor, action, detail), ip, agent,
     };
     return { audit: [entry, ...s.audit] };
   });

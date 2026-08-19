@@ -13,6 +13,7 @@ export const NAV_ACCESS: Record<View, Role[]> = {
   leaves: ["super", "hr", "customer"],
   marketplace: ["super", "sales", "customer"],
   orders: ["super", "sales", "customer"],
+  security: ["super", "hr"],
   inventory: ["super", "production"],
   system: ["super"],
 };
@@ -25,7 +26,8 @@ const NAV: { key: View; label: string; icon: IconName; group: string }[] = [
   { key: "marketplace", label: "كتالوج الجملة", icon: "shop", group: "المبيعات والتجارة" },
   { key: "orders", label: "تتبع الطلبات", icon: "truck", group: "المبيعات والتجارة" },
   { key: "inventory", label: "إدارة المخزون", icon: "boxes", group: "المصنع والموارد البشرية" },
-  { key: "system", label: "النظام والتدقيق", icon: "shield", group: "الإدارة" },
+  { key: "security", label: "مركز الأمان", icon: "shield", group: "الإدارة" },
+  { key: "system", label: "النظام والتدقيق", icon: "sheet", group: "الإدارة" },
 ];
 
 function Logo({ size = 38 }: { size?: number }) {

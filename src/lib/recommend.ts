@@ -1,80 +1,100 @@
 /* ─────────────────────────────────────────────────────────────────────────────
- * محرك التوصيات الذكي — "مقترحات مخصصة لك"
- * يمزج ثلاثة إشارات: سلوك التصفح، تاريخ الشراء (مرجّحًا بحجم الجملة)،
- * والموسمية. في الإنتاج يُنفَّذ كـ Aggregation Pipeline في MongoDB + Redis
- * cache بمفتاح customerId وتنتهي صلاحيته عند كل طلب جديد.
+ * محرك التوصيات الذكي — «مقترح خصيصًا لك»
+ * الإشارات: سجل المشتريات (الطلبات) · مرات تصفح المنتج · حجم طلبات الجملة ·
+ * الموسم الحالي · نية إعادة الطلب · توفر المخزون. كل توصية تحمل سببًا مفسَّرًا
+ * بالعربية (Explainable AI) بدل صندوق أسود.
  * ──────────────────────────────────────────────────────────────────────────── */
-import type { Order, Product } from "./types";
 import { cartonsOf } from "./payroll";
+import type { CartLine, Order, Product } from "./types";
 
-export interface Reco {
+export interface Recommendation {
   product: Product;
   score: number;
   reasons: string[];
 }
 
-export function recommend(
+/** الطلب الموسمي: عائلات نكهات ترتفع في أشهر محددة (تقويم الميلادي) */
+const SEASONAL: Record<string, number[]> = {
+  "تمر": [2, 3, 4, 9, 10],        // رمضان ومواسم الضيافة
+  "شوكولاتة": [10, 11, 0, 1],     // الشتاء والعودة للمدارس
+  "جوز هند": [5, 6, 7, 8],        // الصيف
+  "حمضيات": [11, 0, 1, 2],        // الشتاء
+  "شوفان": [8, 9, 0],             // قرارات بداية السنة
+};
+
+export function recommendFor(
   products: Product[],
-  views: Record<string, number>,
   orders: Order[],
-  limit = 4
-): Reco[] {
-  const familyScore: Record<string, number> = {};
-  const noteScore: Record<string, number> = {};
+  cart: CartLine[],
+  views: Record<string, number>,
+  take = 4
+): Recommendation[] {
+  const month = new Date().getMonth();
+  const inCart = new Set(cart.map((l) => l.productId));
 
-  // 1) إشارة التصفح (أوزان خفيفة)
-  for (const p of products) {
-    const v = views[p.id] ?? 0;
-    if (!v) continue;
-    familyScore[p.family] = (familyScore[p.family] ?? 0) + v * 2;
-    for (const n of p.notes) noteScore[n] = (noteScore[n] ?? 0) + v;
-  }
-
-  // 2) إشارة الشراء (أوزان ثقيلة + حساسية حجم الجملة)
-  let bulkCartons = 0;
+  // ١) تفضيل العائلة من المشتريات الفعلية (أقوى إشارة — حجم الكراتين مرجِّح)
+  const familyWeight = new Map<string, number>();
+  const purchased = new Map<string, number>(); // productId -> كراتين مشتراه
   for (const o of orders) {
     for (const l of o.lines) {
       const p = products.find((x) => x.id === l.productId);
       if (!p) continue;
       const c = cartonsOf(l.tier, l.qty);
-      bulkCartons += c;
-      familyScore[p.family] = (familyScore[p.family] ?? 0) + 6 + c / 15;
-      for (const n of p.notes) noteScore[n] = (noteScore[n] ?? 0) + 2;
+      purchased.set(l.productId, (purchased.get(l.productId) ?? 0) + c);
+      familyWeight.set(p.family, (familyWeight.get(p.family) ?? 0) + c);
     }
   }
-  const isBulk = bulkCartons >= 60;
+  const maxFamily = Math.max(1, ...familyWeight.values());
 
-  // 3) التقييم النهائي لكل منتج
-  const scored: Reco[] = products.map((p) => {
-    let score = 0;
-    const reasons: string[] = [];
+  return products
+    .filter((p) => !inCart.has(p.id))
+    .map((p) => {
+      let score = 0;
+      const reasons: string[] = [];
 
-    const f = familyScore[p.family] ?? 0;
-    if (f >= 4) {
-      score += Math.min(42, f * 2.2);
-      reasons.push(`لأنك مهتم بفئة «${p.flavor}»`);
-    }
-    const noteHit = p.notes.reduce((s, n) => s + (noteScore[n] ?? 0), 0);
-    if (noteHit >= 3) {
-      score += Math.min(22, noteHit * 1.6);
-      reasons.push("يناسب مذاقك المفضل");
-    }
-    if (p.seasonal) {
-      score += 16;
-      reasons.push(`مطلوب الآن — موسم ${p.seasonal}`);
-    }
-    if (isBulk && p.packs[2].price * 60 <= 900) {
-      score += 12;
-      reasons.push("اقتصادي لطلبات البالات");
-    }
-    score += p.rating * 2.5;
-    if (p.stock < 80) score -= 12;
+      // تفضيل العائلة
+      const fw = (familyWeight.get(p.family) ?? 0) / maxFamily;
+      if (fw > 0) {
+        score += fw * 34;
+        if (fw > 0.45) reasons.push(`من مشترياتك في عائلة «${p.family}»`);
+      }
 
-    return { product: p, score: Math.round(score), reasons: reasons.slice(0, 2) };
-  });
+      // نية إعادة الطلب — مشتري الجملة يعيدون شراء نفس الصنف دوريًا
+      const bought = purchased.get(p.id) ?? 0;
+      if (bought > 0) {
+        score += Math.min(26, bought / 4);
+        reasons.push(bought >= 30 ? `عميل جملة لهذا الصنف (${Math.round(bought)} كرتونة سابقًا)` : "سبق أن طلبته — موعد إعادة التعبئة؟");
+      }
 
-  return scored
-    .filter((r) => r.reasons.length > 0)
+      // سلوك التصفح (مؤشر اهتمام لحظي)
+      const v = views[p.id] ?? 0;
+      if (v > 0) {
+        score += Math.min(14, v * 4);
+        reasons.push("اطلعت عليه مؤخرًا");
+      }
+
+      // الموسم
+      if ((SEASONAL[p.family] ?? []).includes(month)) {
+        score += 12;
+        reasons.push("طلب موسمي مرتفع الآن");
+      }
+
+      // جودة المنتج الأساسية: التقييم + ندرة المخزون تدفع القرار السريع
+      score += (p.rating - 3.5) * 6;
+      if (p.stock > 0 && p.stock < 120) {
+        score += 4;
+        reasons.push(`مخزون محدود (${p.stock} كرتونة)`);
+      }
+
+      // خصم الشرائح: المنتجات الرخيصة نسبيًا تستفيد أكثر من دفعها فوق عتبة ١٠ كراتين
+      if (p.packs[2] && p.moqCartons >= 5) score += 3;
+
+      return { product: p, score: Math.round(score * 10) / 10, reasons: reasons.slice(0, 2) };
+    })
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+    .slice(0, take)
+    .map((r) => ({
+      ...r,
+      reasons: r.reasons.length ? r.reasons : ["من الأصناف الأعلى مبيعًا هذا الشهر"],
+    }));
 }
